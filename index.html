@@ -105,6 +105,9 @@ canvas{display:block;border-radius:6px;outline:1px solid var(--line)}
 .tut-flow canvas{height:104px}
 .tut-note{margin:0;padding:10px 12px;border-left:3px solid var(--sun);background:rgba(255,199,90,.08);font-size:13px;line-height:1.7}
 .board-wrap{display:flex;flex-direction:column;gap:8px}
+.board-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.seg-sm button{padding:5px 12px;font-size:12px}
+.board-period{margin:0;font-size:12px;color:var(--mute)}
 .board{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;border-top:1px solid var(--line)}
 .board li{display:grid;grid-template-columns:2.2em 1fr auto;gap:10px;align-items:baseline;padding:7px 2px;border-bottom:1px solid var(--line);font-size:14px}
 .board .rk{font-family:var(--f-mono);font-size:11px;color:var(--mute)}
@@ -1197,13 +1200,18 @@ function hud(){ setHud('st', G ? G.stage : 1); setHud('sc', (G ? G.score : 0).to
 const studioBlock = `<p class="studio">このゲームは <a href="${STUDIO_URL}" target="_blank" rel="noopener">Blue Leaf Studio</a> の作品です。サイト制作・Webアプリ制作のご相談もどうぞ。</p>`;
 function showOverlay(html){ overlay.innerHTML = `<div class="card">${html}</div>`; overlay.hidden = false; renderBoards(); loadBoard(); const b = overlay.querySelector('[data-act]'); b && b.focus({ preventScroll:true }); }
 
-/* ---------- shared ranking (Supabase) ---------- */
+/* ---------- shared ranking (Supabase): monthly and yearly boards, Japan time ---------- */
 const CFG = window.BLS_CONFIG || {};
 const RANK_ON = !!(CFG.supabaseUrl && CFG.supabaseKey);
-let board = [], rankReady = false, rankError = false, lastLoad = 0;
+const boards = { month:[], year:[] };
+let period = 'month', rankReady = false, rankError = false, lastLoad = 0;
 const mine = new Set((() => { try { return JSON.parse(store.get('bls_mine') || '[]'); } catch(e){ return []; } })());
-let myBest = Number(store.get('bls_best_sent')) || 0;
-const boardBlock = `<div class="board-wrap"><div class="eyebrow">Ranking · TOP 10</div><ol class="board"></ol><p class="board-note" hidden></p></div>`;
+const jstNow = () => new Date(Date.now() + 9 * 3600e3);
+const monthKey = () => { const d = jstNow(); return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0'); };
+const periodStart = k => { const d = jstNow(), y = d.getUTCFullYear(), m = d.getUTCMonth(); return new Date((k === 'month' ? Date.UTC(y, m, 1) : Date.UTC(y, 0, 1)) - 9 * 3600e3).toISOString(); };
+const periodLabel = k => { const d = jstNow(); return k === 'month' ? `${d.getUTCMonth() + 1}月の月間` : `${d.getUTCFullYear()}年の年間`; };
+let myBest = Number(store.get('bls_best_' + monthKey())) || 0;
+const boardBlock = `<div class="board-wrap"><div class="board-head"><div class="eyebrow">Ranking · TOP 10</div><div class="seg seg-sm" role="group" aria-label="ランキングの期間"><button type="button" data-act="period" data-p="month">月間</button><button type="button" data-act="period" data-p="year">年間</button></div></div><p class="board-period"></p><ol class="board"></ol><p class="board-note" hidden></p></div>`;
 const cleanName = v => String(v == null ? '' : v).replace(/[\u0000-\u001f]/g, '').trim().slice(0, 12);
 async function sb(path, body){
   const headers = { apikey:CFG.supabaseKey, 'Content-Type':'application/json' };
@@ -1213,19 +1221,33 @@ async function sb(path, body){
   if (!r.ok) throw Object.assign(new Error('HTTP ' + r.status), { status:r.status });
   const txt = await r.text(); return txt ? JSON.parse(txt) : null;
 }
+// one row per registration; keep each name's best inside the period so one player does not fill the board
+function topByName(rows){
+  const seen = new Set(), out = [];
+  for (const r of rows || []){
+    const name = cleanName(r.name) || 'NO NAME', score = Number(r.score);
+    if (!Number.isFinite(score) || seen.has(name)) continue;
+    seen.add(name); out.push({ id:r.id, name, score }); if (out.length === 10) break;
+  }
+  return out;
+}
 async function loadBoard(force){
   if (!RANK_ON){ rankReady = true; renderBoards(); return; }
   if (!force && Date.now() - lastLoad < 15000) return;
   lastLoad = Date.now();
   try {
-    const rows = await sb('scores?select=id,name,score&order=score.desc,created_at.asc&limit=10');
-    board = (rows || []).map(r => ({ id:r.id, name:cleanName(r.name) || 'NO NAME', score:Number(r.score) })).filter(r => Number.isFinite(r.score));
-    rankError = false;
+    const q = k => sb(`scores?select=id,name,score&created_at=gte.${encodeURIComponent(periodStart(k))}&order=score.desc,created_at.asc&limit=60`);
+    const [m, y] = await Promise.all([q('month'), q('year')]);
+    boards.month = topByName(m); boards.year = topByName(y); rankError = false;
   } catch(e){ rankError = true; }
   rankReady = true; renderBoards();
 }
+function setPeriod(p){ period = p === 'year' ? 'year' : 'month'; renderBoards(); }
 function renderBoards(){
+  const board = boards[period];
   overlay.querySelectorAll('.board-wrap').forEach(w => {
+    w.querySelectorAll('[data-act="period"]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.p === period)));
+    w.querySelector('.board-period').textContent = periodLabel(period) + 'ランキング（同じ名前は最高記録だけ表示）';
     const ol = w.querySelector('.board'), note = w.querySelector('.board-note');
     ol.replaceChildren();
     board.forEach((r, i) => {
@@ -1239,16 +1261,17 @@ function renderBoards(){
     if (!RANK_ON) msg = 'ランキングは準備中です。';
     else if (!rankReady) msg = 'ランキングを読み込み中…';
     else if (rankError && !board.length) msg = 'ランキングを読み込めませんでした。通信状況を確認してください。';
-    else if (!board.length) msg = 'まだ記録がありません。最初の1位を狙おう。';
+    else if (!board.length) msg = period === 'month' ? '今月はまだ記録がありません。今月の1位を狙おう。' : '今年はまだ記録がありません。';
     note.hidden = !msg; note.textContent = msg;
   });
-  const top = board[0], tw = $('#topWrap');
+  const top = boards.month[0], tw = $('#topWrap');
   if (top){ tw.hidden = false; $('#top').textContent = `${top.name} ${top.score.toLocaleString()}`; } else tw.hidden = true;
 }
 function entryBlock(score){
   if (!RANK_ON || score <= 0) return '';
-  if (myBest && score <= myBest) return `<p class="board-note">この端末から登録した最高記録：${myBest.toLocaleString()}（これを超えると登録できます）</p>`;
-  return `<form class="entry" data-score="${score}"><label for="nick">名前を入れてランキングに登録（12文字まで）</label><input id="nick" maxlength="12" autocomplete="nickname" placeholder="プレイヤー名"><button class="btn" type="submit">登録</button></form>`;
+  myBest = Number(store.get('bls_best_' + monthKey())) || 0;
+  if (myBest && score <= myBest) return `<p class="board-note">今月この端末から登録した最高記録：${myBest.toLocaleString()}（これを超えると登録できます）</p>`;
+  return `<form class="entry" data-score="${score}"><label for="nick">名前を入れて月間・年間ランキングに登録（12文字まで）</label><input id="nick" maxlength="12" autocomplete="nickname" placeholder="プレイヤー名"><button class="btn" type="submit">登録</button></form>`;
 }
 overlay.addEventListener('submit', async e => {
   e.preventDefault();
@@ -1258,7 +1281,7 @@ overlay.addEventListener('submit', async e => {
   try {
     const id = await sb('rpc/submit_score', { p_name:name, p_score:score });
     if (id != null){ mine.add(id); store.set('bls_mine', JSON.stringify([...mine].slice(-50))); }
-    myBest = score; store.set('bls_best_sent', String(score));
+    myBest = score; store.set('bls_best_' + monthKey(), String(score));
     const p = document.createElement('p'); p.className = 'board-note'; p.textContent = `「${name}」で ${score.toLocaleString()} 点を登録しました。`;
     f.replaceWith(p); loadBoard(true);
   } catch(err){
@@ -1276,6 +1299,7 @@ overlay.addEventListener('click', e => {
   if (a.dataset.act === 'resume') togglePause();
   if (a.dataset.act === 'next') nextStage();
   if (a.dataset.act === 'mode') setMode(a.dataset.mode);
+  if (a.dataset.act === 'period' && typeof setPeriod === 'function') setPeriod(a.dataset.p);
   if (a.dataset.act === 'tut') showTutorial(0, G && G.paused ? 'pause' : 'title');
   if (a.dataset.act === 'tut-page') showTutorial(+a.dataset.page, tutFrom);
   if (a.dataset.act === 'tut-back') { if (tutFrom === 'pause') showPause(); else showTitle(); }
