@@ -12,7 +12,24 @@
 | `manifest.webmanifest`, `icon.svg` | ホーム画面に追加したときのアプリ名とアイコン |
 | `supabase/schema.sql` | ランキング用テーブルと登録用関数。Supabase の SQL Editor で実行する |
 
-## 公開
+## 今月のステージ
+
+タイトル画面の「今月のステージに挑戦」から遊ぶ、月替わりの特別ステージ。本編とは別のランキング（`mode = 'monthly-YYYY-MM'`）で競う。
+
+### 来月のステージを追加する
+
+`index.html` の `const MONTHLY = { ... }` に、日本時間の年月をキーにして1件足す。その月に入ると自動で切り替わる（設定のない月は、いちばん新しい過去の設定を表示）。
+
+| 項目 | 内容 |
+|---|---|
+| `title` / `short` | 画面に出す名前（例：`11月：○○`）と短い名前 |
+| `base` | 地形と敵の動きの元にする本編ステージ（1〜4） |
+| `look` | 地形の色 `{ reef:塗り, edge:輪郭 }` |
+| `order` / `endT` | 出てくる敵・仕掛けの順番（`fan` `fanLow` `dash` `carrier` `turrets` `rear` `wall` `vents`）と、ボスまでの秒数 |
+| `boss` / `bossName` / `tint` | ボスの種類（`core` `jelly` `fort` `worm`）と表示名。`tint` は深淵クラゲの色替え |
+| `lives` / `capsX2` / `startItems` | ルール：残機、カプセル2倍、最初から付く強化 |
+| `rule` | タイトル画面に出すルール説明 |
+
 
 ビルド不要の静的サイト。Vercel でこのリポジトリを Import し、設定を変えずに Deploy する。
 
