@@ -19,5 +19,5 @@
 ## ランキング
 
 - `scores` テーブルは誰でも読めるが、直接の書き込みはできない（RLS）。
-- 登録は `submit_score(p_name, p_score)` 関数だけを通す。名前は12文字まで、スコアは 1〜200,000、全体で1分あたり30件まで。
+- 登録は `submit_score(p_name, p_score)` 関数だけを通す。名前は12文字まで、スコアは 1〜500,000、全体で1分あたり30件まで。
 - `config.js` に入れてよいのは publishable（anon）キーだけ。secret / service_role キーは絶対に入れない。

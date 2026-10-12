@@ -4,7 +4,7 @@
 create table if not exists public.scores (
   id         bigint generated always as identity primary key,
   name       text        not null check (char_length(name) between 1 and 12),
-  score      integer     not null check (score between 1 and 200000),
+  score      integer     not null check (score between 1 and 500000),
   created_at timestamptz not null default now()
 );
 
@@ -28,7 +28,7 @@ declare
   v_id   bigint;
 begin
   if v_name = '' then v_name := 'NO NAME'; end if;
-  if p_score is null or p_score < 1 or p_score > 200000 then
+  if p_score is null or p_score < 1 or p_score > 500000 then
     raise exception 'invalid score' using errcode = '22023';
   end if;
   -- 連打・荒らし対策：全体で1分あたり30件まで
