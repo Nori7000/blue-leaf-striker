@@ -76,6 +76,18 @@ canvas{display:block;border-radius:6px;outline:1px solid var(--line)}
 .studio{font-size:13px;color:var(--mute);border-top:1px solid var(--line);padding-top:12px;line-height:1.6}
 .studio a{color:var(--leaf);text-decoration:none;font-weight:700}
 .studio a:hover{text-decoration:underline}
+.tut-tabs{display:flex;gap:6px;flex-wrap:wrap}
+.tut-tabs button{border:1px solid var(--line);background:transparent;color:var(--mute);border-radius:999px;padding:6px 12px;font:500 12px var(--f-body);cursor:pointer}
+.tut-tabs button[aria-current="true"]{background:var(--sun);border-color:var(--sun);color:var(--sea)}
+.tut-list{display:grid;grid-template-columns:1fr;gap:10px}
+@media (min-width:620px){.tut-list.two{grid-template-columns:1fr 1fr}}
+.tut-item{display:flex;flex-direction:column;gap:6px;border:1px solid var(--line);border-radius:8px;padding:10px;background:rgba(10,36,51,.6);min-width:0}
+.tut-item canvas{width:100%;height:76px;border-radius:5px;outline:none}
+.tut-item h3{margin:0;font:700 14px var(--f-body);display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.tut-item h3 small{font:500 11px var(--f-mono);color:var(--sun);letter-spacing:.06em}
+.tut-item p{margin:0;font-size:13px;line-height:1.6;color:var(--mute)}
+.tut-flow canvas{height:104px}
+.tut-note{margin:0;padding:10px 12px;border-left:3px solid var(--sun);background:rgba(255,199,90,.08);font-size:13px;line-height:1.7}
 .board-wrap{display:flex;flex-direction:column;gap:8px}
 .board{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;border-top:1px solid var(--line)}
 .board li{display:grid;grid-template-columns:2.2em 1fr auto;gap:10px;align-items:baseline;padding:7px 2px;border-bottom:1px solid var(--line);font-size:14px}
@@ -119,7 +131,7 @@ canvas{display:block;border-radius:6px;outline:1px solid var(--line)}
 <script>
 (() => {
 const $ = s => document.querySelector(s);
-const cv = $('#cv'), ctx = cv.getContext('2d'), stage = $('#stage'), screenEl = $('#screen'), overlay = $('#overlay');
+const cv = $('#cv'); let ctx = cv.getContext('2d'); const stage = $('#stage'), screenEl = $('#screen'), overlay = $('#overlay');
 const css = getComputedStyle(document.documentElement);
 const C = {}; ['sea','deep','reef','edge','leaf','leaf-hi','coral','sun','ink','mute'].forEach(k => C[k] = css.getPropertyValue('--' + k).trim());
 const H = 360; let W = 640, scale = 1;
@@ -549,7 +561,8 @@ function drawEnemy(e){
     ctx.closePath(); ctx.stroke(); ctx.fillStyle = C.sun; ctx.beginPath(); ctx.arc(0, 0, 4, 0, 6.283); ctx.fill();
   } else if (e.kind === 'tur'){
     const dir = e.top ? 1 : -1;
-    if (G.p){ const a = Math.atan2(G.p.y - e.y, G.p.x - e.x); ctx.strokeStyle = C.coral; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(a) * 13, Math.sin(a) * 13); ctx.stroke(); }
+    const tgt = e.aimAt || (G && G.p);
+    if (tgt){ const a = Math.atan2(tgt.y - e.y, tgt.x - e.x); ctx.strokeStyle = C.coral; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(a) * 13, Math.sin(a) * 13); ctx.stroke(); }
     ctx.fillStyle = C.coral; ctx.beginPath(); ctx.arc(0, -dir * 4, 10, e.top ? 0 : Math.PI, e.top ? Math.PI : 2 * Math.PI); ctx.fill();
   }
   ctx.restore();
@@ -689,15 +702,18 @@ function fillNick(){ const i = overlay.querySelector('#nick'); if (i) i.value = 
 function hideOverlay(){ overlay.hidden = true; overlay.innerHTML = ''; }
 overlay.addEventListener('click', e => {
   const a = e.target.closest('[data-act]'); if (!a) return;
-  if (a.dataset.act === 'start') newGame();
+  if (a.dataset.act === 'start'){ if (!store.get('bls_tut_seen') && !G){ showTutorial(0, 'first'); return; } newGame(); }
   if (a.dataset.act === 'resume') togglePause();
+  if (a.dataset.act === 'tut') showTutorial(0, G && G.paused ? 'pause' : 'title');
+  if (a.dataset.act === 'tut-page') showTutorial(+a.dataset.page, tutFrom);
+  if (a.dataset.act === 'tut-back') { if (tutFrom === 'pause') showPause(); else showTitle(); }
   if (a.dataset.act === 'title') { G = null; updatePanel(); showTitle(); playTrack('title'); }
 });
 function showTitle(){
   showOverlay(`
     <div class="eyebrow">Prototype · Stage 1</div>
     <h1 class="logo">BLUE LEAF<br><span>STRIKER</span></h1>
-    <div class="row"><button class="btn" type="button" data-act="start">スタート</button></div>
+    <div class="row"><button class="btn" type="button" data-act="start">スタート</button><button class="btn ghost" type="button" data-act="tut">あそびかた</button></div>
     <p class="lead">リーフ型の機体で海底の洞窟を進む、横スクロールシューティングの試作版です。</p>
     <dl class="how">
       <dt>MOVE</dt><dd>画面を指でなぞって移動（PCは矢印キー）</dd>
@@ -732,10 +748,109 @@ function togglePause(){
   if (!G || G.state !== 'play') return;
   G.paused = !G.paused;
   if (G.paused) bgm.pause(); else resumeTrack();
-  if (G.paused) showOverlay(`<div class="eyebrow">Paused</div><h2 class="big">一時停止中</h2>
-    <div class="row"><button class="btn" type="button" data-act="resume">つづける</button><button class="btn ghost" type="button" data-act="title">タイトルへ</button></div>`);
+  if (G.paused) showPause();
   else hideOverlay();
 }
+function showPause(){
+  showOverlay(`<div class="eyebrow">Paused</div><h2 class="big">一時停止中</h2>
+    <div class="row"><button class="btn" type="button" data-act="resume">つづける</button><button class="btn ghost" type="button" data-act="tut">あそびかた</button><button class="btn ghost" type="button" data-act="title">タイトルへ</button></div>`);
+}
+
+/* ---------- tutorial ---------- */
+let tutFrom = 'title';
+const TUT_PAGES = [
+  { tab:'ミスになるとき', html:`
+    <div class="tut-list two">
+      <div class="tut-item"><canvas data-fig="die-bullet"></canvas><h3>敵の弾に当たる</h3><p>赤い丸い弾にふれるとミス。弾は自機をねらって飛んでくるものもあります。</p></div>
+      <div class="tut-item"><canvas data-fig="die-enemy"></canvas><h3>敵にぶつかる</h3><p>敵の機体に体当たりしてもミス。倒すか、よけて進みます。</p></div>
+      <div class="tut-item"><canvas data-fig="die-wall"></canvas><h3>上下の壁にふれる</h3><p>洞窟の天井と床（青緑の地形）にふれるとミス。SHIELD があっても防げません。</p></div>
+      <div class="tut-item"><canvas data-fig="die-boss"></canvas><h3>ボスにぶつかる</h3><p>ボスの六角形の本体と、前にある装甲にふれるとミス。</p></div>
+    </div>
+    <p class="tut-note">ミスすると残機が1つ減り、強化はすべてなくなります。残機0でミスするとゲームオーバー。復活した直後、機体が点滅している約2秒間は無敵です。</p>` },
+  { tab:'敵', html:`
+    <div class="tut-list two">
+      <div class="tut-item"><canvas data-fig="en-fan"></canvas><h3>編隊 <small>100点</small></h3><p>5機が波打ちながら並んで飛んできます。5機すべて倒すとカプセルが出ます。</p></div>
+      <div class="tut-item"><canvas data-fig="en-dash"></canvas><h3>突撃機 <small>150点</small></h3><p>画面に入ると、自機の高さめがけてまっすぐ突っ込んできます。</p></div>
+      <div class="tut-item"><canvas data-fig="en-carrier"></canvas><h3>運び屋 <small>200点</small></h3><p>黄色い六角形。弾4発で倒せて、倒すと必ずカプセルを落とします。</p></div>
+      <div class="tut-item"><canvas data-fig="en-turret"></canvas><h3>砲台 <small>300点</small></h3><p>天井や床に付いていて、自機をねらって撃ってきます。弾2発で倒せます。</p></div>
+    </div>
+    <div class="tut-item"><canvas data-fig="en-boss" style="height:110px"></canvas><h3>ボス「コア」 <small>装甲 500点 / 撃破 10,000点</small></h3><p>前にある3枚の装甲（青緑の板）を壊すと、中心の赤いコアに弾が届くようになります。コアに24発当てると撃破。5方向に広がる弾と、自機をねらう弾を交互に撃ってきます。</p></div>` },
+  { tab:'アイテム', html:`
+    <div class="tut-item tut-flow"><canvas data-fig="it-flow"></canvas><h3>カプセルの使い方</h3><p>黄色いカプセルを取るたびに、画面下のゲージの光る位置が右へ1つ進みます（SHIELD の次は SPEED に戻ります）。ほしい強化が光っているときに POWER を押すと、その強化が付いてゲージは空に戻ります。</p></div>
+    <div class="tut-list two">
+      <div class="tut-item"><canvas data-fig="it-speed"></canvas><h3>SPEED</h3><p>移動が速くなります。4段階まで。</p></div>
+      <div class="tut-item"><canvas data-fig="it-missile"></canvas><h3>MISSILE</h3><p>下へ落ちて、床をはうミサイルを撃ちます。床の砲台に強い。</p></div>
+      <div class="tut-item"><canvas data-fig="it-twin"></canvas><h3>TWIN</h3><p>前と斜め上の2方向に撃ちます。BEAM とはどちらか一方。</p></div>
+      <div class="tut-item"><canvas data-fig="it-beam"></canvas><h3>BEAM</h3><p>敵をつらぬく長いビーム。並んだ敵をまとめて倒せます。</p></div>
+      <div class="tut-item"><canvas data-fig="it-drone"></canvas><h3>DRONE</h3><p>自機の後をついてくる分身。自機と同じ弾を撃ちます。2つまで。</p></div>
+      <div class="tut-item"><canvas data-fig="it-shield"></canvas><h3>SHIELD</h3><p>前方のバリア。敵の弾や体当たりを3回まで防ぎます（壁は防げません）。</p></div>
+    </div>
+    <p class="tut-note">ゲージで薄く表示されている強化は、もう最大なので取れません。</p>` }
+];
+function showTutorial(page, from){
+  tutFrom = from; page = Math.max(0, Math.min(TUT_PAGES.length - 1, page));
+  const pg = TUT_PAGES[page], last = page === TUT_PAGES.length - 1;
+  const tabs = TUT_PAGES.map((p, i) => `<button type="button" data-act="tut-page" data-page="${i}" aria-current="${i === page}">${i + 1}. ${p.tab}</button>`).join('');
+  const nav = [];
+  if (page > 0) nav.push(`<button class="btn ghost" type="button" data-act="tut-page" data-page="${page - 1}">もどる</button>`);
+  if (!last) nav.push(`<button class="btn" type="button" data-act="tut-page" data-page="${page + 1}">つぎへ</button>`);
+  else if (from === 'first') nav.push(`<button class="btn" type="button" data-act="start">ゲームを始める</button>`);
+  if (from !== 'first' || !last) nav.push(`<button class="btn ghost" type="button" data-act="tut-back">${from === 'pause' ? 'ゲームにもどる' : 'タイトルへ'}</button>`);
+  if (last) store.set('bls_tut_seen', '1');
+  showOverlay(`<div class="eyebrow">How to play</div><h2 class="big">あそびかた</h2><div class="tut-tabs">${tabs}</div>${pg.html}<div class="row">${nav.join('')}</div>`);
+  overlay.scrollTop = 0;
+  requestAnimationFrame(() => overlay.querySelectorAll('canvas[data-fig]').forEach(c => drawFig(c, c.dataset.fig)));
+}
+function drawFig(el, kind){
+  const w = el.clientWidth || 260, h = el.clientHeight || 76, dpr = Math.min(window.devicePixelRatio || 1, 2);
+  el.width = Math.round(w * dpr); el.height = Math.round(h * dpr);
+  const c = el.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const old = ctx; ctx = c;
+  try { ctx.fillStyle = C.sea; ctx.fillRect(0, 0, w, h); (FIGS[kind] || (() => {}))(w, h); } finally { ctx = old; }
+}
+const fx = {
+  bullet(x, y){ ctx.fillStyle = C.coral; ctx.beginPath(); ctx.arc(x, y, 3.5, 0, 6.283); ctx.fill(); ctx.fillStyle = C.ink; ctx.beginPath(); ctx.arc(x, y, 1.4, 0, 6.283); ctx.fill(); },
+  shot(x, y, a = 0){ ctx.strokeStyle = C['leaf-hi']; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - Math.cos(a) * 9, y - Math.sin(a) * 9); ctx.stroke(); },
+  cap(x, y){ ctx.fillStyle = C.sun; ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x - 8, y - 5, 16, 10, 5); else ctx.rect(x - 8, y - 5, 16, 10); ctx.fill(); ctx.fillStyle = C.sea; ctx.fillRect(x - 1, y - 3, 2, 6); },
+  arrow(x1, y, x2, col){ ctx.strokeStyle = col || C.mute; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(x1, y); ctx.lineTo(x2, y); ctx.moveTo(x2 - 6, y - 5); ctx.lineTo(x2, y); ctx.lineTo(x2 - 6, y + 5); ctx.stroke(); },
+  miss(x, y){ ctx.strokeStyle = C.coral; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 14, 0, 6.283); ctx.stroke(); ctx.font = '700 11px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-mono'); ctx.fillStyle = C.coral; ctx.textAlign = 'center'; ctx.fillText('MISS', x, y - 20); },
+  label(x, y, s, col){ ctx.font = '500 10px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-mono'); ctx.fillStyle = col || C.mute; ctx.textAlign = 'center'; ctx.fillText(s, x, y); },
+  ground(w, y, top){ ctx.fillStyle = C.reef; ctx.beginPath(); ctx.moveTo(0, top ? 0 : 200); for (let x = 0; x <= w; x += 6) ctx.lineTo(x, y + Math.sin(x * .05) * 4); ctx.lineTo(w, top ? 0 : 200); ctx.closePath(); ctx.fill(); ctx.strokeStyle = C.edge; ctx.lineWidth = 1.5; ctx.beginPath(); for (let x = 0; x <= w; x += 6){ const yy = y + Math.sin(x * .05) * 4; x ? ctx.lineTo(x, yy) : ctx.moveTo(x, yy); } ctx.stroke(); },
+  dots(x1, y1, x2, y2, col){ ctx.strokeStyle = col || C.mute; ctx.setLineDash([3, 4]); ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.setLineDash([]); }
+};
+const FIGS = {
+  'die-bullet'(w, h){ const y = h / 2 + 6; drawLeaf(w * .32, y, 1, false); fx.bullet(w * .32 + 14, y - 1); fx.bullet(w * .6, y - 4); fx.bullet(w * .78, y - 8); fx.dots(w * .32 + 18, y - 1, w * .78, y - 8, C.coral); fx.miss(w * .32 + 6, y); },
+  'die-enemy'(w, h){ const y = h / 2 + 6; drawLeaf(w * .4, y, 1, false); drawEnemy({ kind:'fan', x:w * .4 + 20, y, t:.4 }); drawEnemy({ kind:'fan', x:w * .4 + 52, y:y - 10, t:.9 }); fx.miss(w * .4 + 10, y); },
+  'die-wall'(w, h){ fx.ground(w, h - 16, false); fx.ground(w, 10, true); const x = w * .45; drawLeaf(x, h - 24, 1, false); fx.miss(x, h - 24); },
+  'die-boss'(w, h){ drawBoss({ x:w - 64, y:h / 2 + 4, t:0, plates:[5, 5, 5], flash:0, dead:false }); drawLeaf(w - 136, h / 2 + 4, 1, false); fx.miss(w - 128, h / 2 + 4); },
+  'en-fan'(w, h){ for (let i = 0; i < 5; i++){ const x = 24 + i * 26; drawEnemy({ kind:'fan', x, y:h / 2 + 18 * Math.sin(x * .05), t:i * .3 }); } fx.arrow(w - 92, h / 2, w - 52); fx.cap(w - 30, h / 2); fx.label(w - 30, h / 2 + 22, '5機で', C.sun); },
+  'en-dash'(w, h){ const ly = h / 2 + 14; drawLeaf(34, ly, 1, false); drawEnemy({ kind:'dash', x:w - 40, y:16, vx:-210, vy:Math.max(-140, (ly - 16) / ((w - 74) / 210)), t:0 }); fx.dots(w - 52, 20, 52, ly - 2, C.coral); },
+  'en-carrier'(w, h){ drawEnemy({ kind:'carrier', x:w * .35, y:h / 2, t:.3 }); fx.label(w * .35, h / 2 + 30, '弾4発', C.mute); fx.arrow(w * .35 + 26, h / 2, w * .62); fx.cap(w * .72, h / 2); },
+  'en-turret'(w, h){ const fy = h - 12; fx.ground(w, fy, false); const leaf = { x:40, y:20 }; drawLeaf(leaf.x, leaf.y, 1, false); const t = { kind:'tur', x:w * .7, y:fy - 6, top:false, t:0, aimAt:leaf }; drawEnemy(t); fx.bullet(w * .48, (leaf.y + t.y) / 2 + 4); fx.dots(w * .7 - 10, fy - 12, 52, 24, C.coral); },
+  'en-boss'(w, h){ const b = { x:w - 70, y:h / 2, t:0, plates:[5, 5, 5], flash:0, dead:false }; drawBoss(b); fx.label(b.x - 48, b.y - 26, '装甲×3', C.edge); fx.label(b.x - 22, b.y + 30, 'コア', C.coral); for (let k = -2; k <= 2; k++){ const a = Math.PI + k * .22; fx.bullet(b.x - 70 + Math.cos(a) * 40, b.y + Math.sin(a) * 40); } drawLeaf(30, h / 2, 1, false); },
+  'it-flow'(w, h){
+    const y = 26, cw = Math.max(20, Math.min(30, (w - 160) / 6 - 2)), gx = 60;
+    fx.cap(18, y); fx.label(18, y + 22, '取る', C.sun);
+    fx.arrow(32, y, 54);
+    ['SPD','MIS','TWN','BEM','DRN','SHD'].forEach((n, i) => { const x = gx + i * (cw + 2); ctx.strokeStyle = 'rgba(143,179,191,.4)'; ctx.lineWidth = 1; ctx.strokeRect(x, y - 11, cw, 22); if (i === 1){ ctx.fillStyle = C.sun; ctx.fillRect(x, y - 11, cw, 22); } fx.label(x + cw / 2, y + 4, n, i === 1 ? C.sea : C.mute); });
+    const ex = gx + 6 * (cw + 2); fx.arrow(ex + 2, y, ex + 20);
+    const pw = Math.min(58, w - ex - 26);
+    ctx.fillStyle = C.leaf; ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(ex + 24, y - 12, pw, 24, 6); else ctx.rect(ex + 24, y - 12, pw, 24); ctx.fill(); fx.label(ex + 24 + pw / 2, y + 4, 'POWER', C.sea);
+    fx.label(gx + 1.5 * (cw + 2), y + 26, '↑ 1つ進む', C.sun);
+    fx.label(ex + 24 + pw / 2, y + 26, '押す', C.leaf);
+    const by = h - 18;
+    ctx.textAlign = 'left'; ctx.font = '500 10px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-mono'); ctx.fillStyle = C.mute; ctx.fillText('例）MIS が光っている時に POWER', 12, by - 16);
+    drawLeaf(30, by, 1, false); fx.arrow(52, by, 84, C.sun); drawLeaf(108, by, 1, false); fx.dots(110, by + 4, 150, by + 14, C.sun);
+    ctx.fillStyle = C.sun; ctx.beginPath(); ctx.moveTo(156, by + 15); ctx.lineTo(148, by + 11); ctx.lineTo(148, by + 18); ctx.fill();
+    fx.label(Math.min(w - 40, 200), by + 4, 'ミサイルが付く', C.sun);
+  },
+  'it-speed'(w, h){ const y = h / 2; ctx.strokeStyle = 'rgba(92,200,255,.5)'; ctx.lineWidth = 2; for (let i = 0; i < 4; i++){ ctx.beginPath(); ctx.moveTo(w * .5 - 30 - i * 14, y - 9 + i * 6); ctx.lineTo(w * .5 - 18 - i * 14 - 18, y - 9 + i * 6); ctx.stroke(); } drawLeaf(w * .5, y, 1, false); fx.label(w * .5 + 50, y + 4, '×4段階', C.sun); },
+  'it-missile'(w, h){ const fy = h - 12; fx.ground(w, fy, false); drawLeaf(40, 18, 1, false); ctx.strokeStyle = C.sun; ctx.setLineDash([3, 4]); ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(44, 24); ctx.quadraticCurveTo(70, fy - 8, 110, fy - 8); ctx.lineTo(w - 70, fy - 8); ctx.stroke(); ctx.setLineDash([]); const mx = w - 64, my = fy - 8; ctx.fillStyle = C.sun; ctx.beginPath(); ctx.moveTo(mx + 5, my); ctx.lineTo(mx - 4, my - 3); ctx.lineTo(mx - 4, my + 3); ctx.fill(); drawEnemy({ kind:'tur', x:w - 30, y:fy - 6, top:false, t:0, aimAt:{ x:40, y:18 } }); },
+  'it-twin'(w, h){ const y = h - 22; drawLeaf(40, y, 1, false); for (let i = 1; i <= 4; i++){ fx.shot(52 + i * 30, y); fx.shot(52 + i * 18, y - i * 14, -Math.PI / 4); } },
+  'it-beam'(w, h){ const y = h / 2; drawLeaf(34, y, 1, false); drawEnemy({ kind:'fan', x:w * .5, y, t:.2 }); drawEnemy({ kind:'fan', x:w * .66, y, t:.7 }); drawEnemy({ kind:'fan', x:w * .82, y, t:1.1 }); ctx.strokeStyle = C.leaf; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(52, y); ctx.lineTo(w - 12, y); ctx.stroke(); ctx.strokeStyle = C['leaf-hi']; ctx.lineWidth = 1; ctx.stroke(); fx.label(w * .66, y - 16, 'つらぬく', C.leaf); },
+  'it-drone'(w, h){ const pts = [[w * .62, h / 2 - 8], [w * .42, h / 2 + 12], [w * .22, h / 2 - 6]]; fx.dots(pts[2][0], pts[2][1], pts[0][0], pts[0][1], 'rgba(92,200,255,.5)'); drawLeaf(pts[0][0], pts[0][1], 1, false); [pts[1], pts[2]].forEach(([x, y]) => { ctx.fillStyle = C['leaf-hi']; ctx.beginPath(); ctx.arc(x, y, 4, 0, 6.283); ctx.fill(); ctx.strokeStyle = C.leaf; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(x, y, 7, 0, 6.283); ctx.stroke(); fx.shot(x + 22, y); }); fx.shot(pts[0][0] + 30, pts[0][1]); fx.label(pts[2][0], pts[2][1] + 22, '最大2つ', C.sun); },
+  'it-shield'(w, h){ const x = w * .38, y = h / 2; drawLeaf(x, y, 1, false); ctx.strokeStyle = C.leaf; ctx.globalAlpha = .95; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(x + 2, y, 18, -1.15, 1.15); ctx.stroke(); ctx.globalAlpha = 1; fx.bullet(x + 26, y - 6); fx.dots(x + 30, y - 6, w * .8, y - 18, C.coral); fx.label(w * .78, y + 18, '3回まで防ぐ', C.sun); }
+};
 
 /* ---------- loop ---------- */
 let last = performance.now();
