@@ -47,6 +47,8 @@ canvas{display:block;border-radius:6px;outline:1px solid var(--line)}
 #hud{position:absolute;inset:0 0 auto 0;display:flex;align-items:center;gap:14px;padding:8px 10px;font-family:var(--f-mono);font-size:12px;font-variant-numeric:tabular-nums;color:var(--ink);pointer-events:none}
 #hud .lbl{color:var(--mute);font-size:10px;letter-spacing:.1em;margin-right:4px}
 #hud .sp{flex:1}
+#hud > span{white-space:nowrap}
+@media (max-width:460px){#hud{gap:9px;font-size:11px}#hud .lbl{margin-right:2px}#topWrap{display:none!important}}
 #hud button{pointer-events:auto;width:30px;height:30px;border-radius:6px;border:1px solid var(--line);background:rgba(10,36,51,.7);color:var(--ink);font:500 12px var(--f-mono);cursor:pointer}
 #hud button:focus-visible,.btn:focus-visible,#power:focus-visible{outline:2px solid var(--sun);outline-offset:2px}
 #panel{flex:none;display:flex;gap:10px;align-items:stretch;padding:10px 16px;border-top:1px solid var(--line);background:var(--deep);touch-action:none}
@@ -64,6 +66,10 @@ canvas{display:block;border-radius:6px;outline:1px solid var(--line)}
 .seg button[aria-pressed="true"]{background:var(--leaf);color:var(--sea)}
 .seg button:focus-visible{outline:2px solid var(--sun);outline-offset:-2px}
 .mode-desc{margin:0;font-size:13px;color:var(--mute);line-height:1.6}
+.monthly{display:flex;flex-direction:column;gap:8px;padding:14px;border:1px solid var(--sun);border-radius:10px;background:rgba(255,199,90,.06)}
+.monthly h3{margin:0;font:700 18px var(--f-body)}
+.monthly p{margin:0;font-size:13px;line-height:1.6;color:var(--mute)}
+.monthly .rule{color:var(--ink)}
 #power{flex:none;width:100px;border:0;border-radius:8px;background:var(--leaf);color:var(--sea);font:700 13px var(--f-display);letter-spacing:.06em;cursor:pointer}
 #power:disabled{background:var(--reef);color:var(--mute);cursor:default}
 #power{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;line-height:1.1}
@@ -256,6 +262,26 @@ const STAGES = {
   4:{ name:'熱水噴出孔',   sub:'熱水噴出孔 ・ 噴き上がる熱水と火山弾に注意' },
   5:{ name:'深海の玉座',   sub:'深海の玉座 ・ 最後の戦い' }
 };
+/* ---------- 今月のステージ (monthly stage) ----------
+   Add one entry per month, keyed by Japan-time 'YYYY-MM'. A month without an entry keeps showing the newest past entry.
+   base: which main stage the terrain/enemy behaviour is borrowed from (1-4), boss: core | jelly | fort | worm */
+const MONTHLY = {
+  '2026-10': {
+    title:'10月：ランタン海溝', short:'ランタン海溝', base:2,
+    look:{ reef:'#2a1630', edge:'#ff9a3c' },
+    order:['fan','rear','carrier','fanLow','turrets','fan','carrier','rear','dash','fanLow','carrier','turrets','rear'],
+    endT:70, boss:'jelly', bossName:'パンプキン・ジェリー',
+    tint:{ bell:'rgba(255,140,40,.55)', line:'#ffc27a', tent:'#ff9a3c' },
+    lives:0, capsX2:true, startItems:['SPEED'],
+    rule:'残機なしの1機勝負。そのかわりカプセルが2倍出て、最初から SPEED が1段階付いています。'
+  }
+};
+const jstMonth = () => { const d = new Date(Date.now() + 9 * 3600e3); return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0'); };
+function monthlyNow(){
+  const cur = jstMonth(), keys = Object.keys(MONTHLY).sort();
+  const key = MONTHLY[cur] ? cur : keys.filter(k => k <= cur).pop() || keys[0];
+  return key ? { key, rankKey:'monthly-' + key, current:key === cur, ...MONTHLY[key] } : null;
+}
 const stepQ = v => Math.round(v / 12) * 12;
 const tri = v => Math.abs((((v % 1) + 1) % 1) * 2 - 1); // 0..1 sawtooth-like triangle wave for jagged rock
 const ceilY  = wx => stg() === 5
@@ -278,10 +304,16 @@ const floorY = wx => stg() === 5
   : H - TA * (16 + 20 * (1 + Math.sin(wx * .009 + 2)) * .5 + 26 * (1 + Math.sin(wx * .0031 + .4)) * .5);
 const STAGE_LOOK = { 1:{ reef:null, edge:null }, 2:{ reef:'#1b2546', edge:'#8ea2ff' }, 3:{ reef:'#3a2a20', edge:'#d39a5b' }, 4:{ reef:'#24120f', edge:'#ff8a3d' }, 5:{ reef:'#1d1630', edge:'#e6c36a' } };
 const BOSS_EDGE = { 2:'#8ea2ff', 3:'#d39a5b' };
-const terrCol = k => (STAGE_LOOK[stg()] && STAGE_LOOK[stg()][k]) || C[k];
+const terrCol = k => (G && G.mcfg && G.mcfg.look[k]) || (STAGE_LOOK[stg()] && STAGE_LOOK[stg()][k]) || C[k];
 
 /* ---------- game state ---------- */
 let G = null;
+function buildMonthlyScript(cfg){
+  const ev = []; let t = 2.5, k = 0;
+  while (t < cfg.endT){ const type = cfg.order[k % cfg.order.length]; ev.push({ t, type }); t += type === 'turrets' || type === 'wall' || type === 'vents' ? 5 : 3.4; k++; }
+  ev.push({ t:cfg.endT + 4, type:'boss' });
+  return ev;
+}
 function buildScript(stage){
   const order = stage === 5
     ? ['fan','dash','carrier','rear','fanLow','dash','fan','carrier']
@@ -298,14 +330,17 @@ function buildScript(stage){
   ev.push({ t: stage === 5 ? 30 : 84, type: 'boss' });
   return ev;
 }
-function newGame(){
+function newGame(mode = 'main'){
   initAudio(); audioUnlocked = true; playTrack('stage');
-  G = { state:'play', stage:1, score:0, lives:2, paused:false, p:null, hinted:false };
+  const mcfg = mode === 'monthly' ? monthlyNow() : null;
+  G = { state:'play', mode:mcfg ? 'monthly' : 'main', mcfg, stage:mcfg ? mcfg.base : 1, score:0, lives:mcfg ? mcfg.lives : 2, paused:false, p:null, hinted:false };
   resetStage(); spawnPlayer(); hideOverlay();
+  if (mcfg) for (const n of mcfg.startItems || []) if (ITEMS[n] && ITEMS[n].can(G.p)) ITEMS[n].apply(G.p);
+  updatePanel();
 }
 function resetStage(){
   Object.assign(G, { state:'play', t:0, scroll:0, gauge:-1, flashIdx:-1, flashT:0, shots:[], eb:[], en:[], parts:[], caps:[], texts:[], blocks:[], walls:{}, wallId:0, vents:[],
-    groups:{}, gid:0, eid:0, script:buildScript(G.stage), si:0, boss:null, bossDead:false, clearT:0, respawn:0,
+    groups:{}, gid:0, eid:0, script:G.mcfg ? buildMonthlyScript(G.mcfg) : buildScript(G.stage), si:0, boss:null, bossDead:false, clearT:0, respawn:0,
     fireCd:0, misCd:0, snCd:0, shake:0, banner:2.5, rush:null, rushN:0, nextBossT:0, bossBanner:0 });
   GAUGE = gaugeList(G.stage); buildGauge(); TA = 0; updatePanel();
 }
@@ -447,6 +482,7 @@ function spawn(type){
       G.blocks.push({ wx:wx + c * S, y:top + r * S + S / 2, hp:2, chest:c === 0 && r === chest, x:W + 30, w });
   } else if (type === 'boss'){
     playTrack('boss');
+    if (G.mcfg){ G.boss = makeBoss(G.mcfg.boss, false); G.boss.tint = G.mcfg.tint; G.bossBanner = 2.6; return; }
     if (G.stage === 5){ G.rush = ['core','jelly','fort','worm','king']; G.rushN = 0; nextRush(); return; }
     G.boss = makeBoss(['core','jelly','fort','worm'][G.stage - 1], false);
     G.bossBanner = 2.6;
@@ -480,7 +516,7 @@ function burst(x, y, c, n, s){
   }
   G.parts.push({ ring:true, x, y, l:.35, m:.35, c, R:18 + 14 * s });
 }
-function dropCap(x, y){ G.caps.push({ x, y, t:0 }); }
+function dropCap(x, y){ G.caps.push({ x, y, t:0 }); if (G.mcfg && G.mcfg.capsX2) G.caps.push({ x:x + 18, y:y + 10, t:.3 }); }
 function killEnemy(e){
   e.dead = true; G.score += e.sc; sfx.small();
   burst(e.x, e.y, e.kind === 'carrier' ? C.sun : C.coral, 14, 1);
@@ -830,7 +866,8 @@ function drawJelly(b){
   const open = jellyOpen(b), lift = open ? 16 : 0, pulse = 1 + .05 * Math.sin(b.t * 6);
   ctx.save();
   // tentacles
-  ctx.strokeStyle = '#b48cff'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  const tn = b.tint || {};
+  ctx.strokeStyle = tn.tent || '#b48cff'; ctx.lineWidth = 3; ctx.lineCap = 'round';
   for (let i = 0; i < 5; i++){
     const tx = b.x - 28 + i * 14; ctx.beginPath(); ctx.moveTo(tx, b.y + 14 - lift * .5);
     for (let j = 1; j <= 4; j++) ctx.lineTo(tx + Math.sin(b.t * 3 + i + j * .6) * 7 * j / 4, b.y + (open ? 14 : 22) + j * 14);
@@ -841,7 +878,7 @@ function drawJelly(b){
   ctx.beginPath(); ctx.arc(b.x - 4, b.y + 6, 10, 0, 6.283); ctx.fill(); ctx.globalAlpha = 1;
   // bell
   ctx.translate(b.x, b.y - lift); ctx.scale(pulse, 1 / pulse);
-  ctx.fillStyle = 'rgba(120,90,200,.55)'; ctx.strokeStyle = b.flash > 0 ? C.ink : '#c9b2ff'; ctx.lineWidth = 2.5;
+  ctx.fillStyle = tn.bell || 'rgba(120,90,200,.55)'; ctx.strokeStyle = b.flash > 0 ? C.ink : (tn.line || '#c9b2ff'); ctx.lineWidth = 2.5;
   ctx.beginPath(); ctx.ellipse(0, 0, 44, 34, 0, Math.PI, 0); ctx.quadraticCurveTo(22, 14, 0, 10); ctx.quadraticCurveTo(-22, 14, -44, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
   ctx.globalAlpha = .45; ctx.lineWidth = 1.2; for (let k = -2; k <= 2; k++){ ctx.beginPath(); ctx.moveTo(k * 12, 8); ctx.quadraticCurveTo(k * 16, -14, k * 6, -30); ctx.stroke(); }
   ctx.restore();
@@ -1168,9 +1205,9 @@ function draw(){
   if (G.banner > 0){
     ctx.globalAlpha = Math.min(1, G.banner / .6); ctx.textAlign = 'center';
     ctx.fillStyle = C.sun; ctx.font = '700 22px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-display');
-    ctx.fillText('STAGE ' + G.stage, W / 2, H / 2 - 8);
+    ctx.fillText(G.mcfg ? '今月のステージ' : 'STAGE ' + G.stage, W / 2, H / 2 - 8);
     ctx.font = '500 12px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-body'); ctx.fillStyle = C.ink;
-    ctx.fillText(STAGES[G.stage].sub, W / 2, H / 2 + 16); ctx.globalAlpha = 1;
+    ctx.fillText(G.mcfg ? G.mcfg.title + ' ・ 1機勝負' : STAGES[G.stage].sub, W / 2, H / 2 + 16); ctx.globalAlpha = 1;
   }
   if (G.rushN > 0 && G.boss && !G.bossDead){
     ctx.textAlign = 'center'; ctx.fillStyle = C.sun; ctx.font = '700 11px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-mono');
@@ -1181,7 +1218,7 @@ function draw(){
     ctx.fillStyle = C.coral; ctx.font = '700 14px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-mono');
     ctx.fillText(G.boss.type === 'king' ? 'FINAL WARNING' : 'WARNING', W / 2, 54);
     ctx.fillStyle = C.ink; ctx.font = '700 18px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-body');
-    ctx.fillText('ボス「' + BOSS_NAME[G.boss.type] + '」', W / 2, 76); ctx.globalAlpha = 1;
+    ctx.fillText('ボス「' + ((G.mcfg && G.mcfg.bossName) || BOSS_NAME[G.boss.type]) + '」', W / 2, 76); ctx.globalAlpha = 1;
   }
   if (G.hint > 0){
     ctx.globalAlpha = Math.min(1, G.hint / .5);
@@ -1196,22 +1233,25 @@ function floatText(x, y, s, c, life = 1.2, size = 11){ if (G) G.texts.push({ x, 
 /* ---------- HUD & overlays ---------- */
 const hudEls = { sc:$('#sc'), hi:$('#hi'), lv:$('#lv'), st:$('#st') }, hudLast = {};
 function setHud(k, v){ if (hudLast[k] !== v){ hudLast[k] = v; hudEls[k].textContent = v; } }
-function hud(){ setHud('st', G ? G.stage : 1); setHud('sc', (G ? G.score : 0).toLocaleString()); setHud('hi', Math.max(hi, G ? G.score : 0).toLocaleString()); setHud('lv', G ? G.lives : 2); }
+function hud(){ setHud('st', G ? (G.mode === 'monthly' ? '月' : G.stage) : 1); setHud('sc', (G ? G.score : 0).toLocaleString()); setHud('hi', Math.max(hi, G ? G.score : 0).toLocaleString()); setHud('lv', G ? G.lives : 2); }
 const studioBlock = `<p class="studio">このゲームは <a href="${STUDIO_URL}" target="_blank" rel="noopener">Blue Leaf Studio</a> の作品です。サイト制作・Webアプリ制作のご相談もどうぞ。</p>`;
 function showOverlay(html){ overlay.innerHTML = `<div class="card">${html}</div>`; overlay.hidden = false; renderBoards(); loadBoard(); const b = overlay.querySelector('[data-act]'); b && b.focus({ preventScroll:true }); }
 
 /* ---------- shared ranking (Supabase): monthly and yearly boards, Japan time ---------- */
 const CFG = window.BLS_CONFIG || {};
 const RANK_ON = !!(CFG.supabaseUrl && CFG.supabaseKey);
-const boards = { month:[], year:[] };
+const boards = { month:[], year:[], stage:[] };
+let modeColumn = true; // false until the database migration that adds scores.mode has been run
 let period = 'month', rankReady = false, rankError = false, lastLoad = 0;
 const mine = new Set((() => { try { return JSON.parse(store.get('bls_mine') || '[]'); } catch(e){ return []; } })());
 const jstNow = () => new Date(Date.now() + 9 * 3600e3);
 const monthKey = () => { const d = jstNow(); return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0'); };
 const periodStart = k => { const d = jstNow(), y = d.getUTCFullYear(), m = d.getUTCMonth(); return new Date((k === 'month' ? Date.UTC(y, m, 1) : Date.UTC(y, 0, 1)) - 9 * 3600e3).toISOString(); };
-const periodLabel = k => { const d = jstNow(); return k === 'month' ? `${d.getUTCMonth() + 1}月の月間` : `${d.getUTCFullYear()}年の年間`; };
-let myBest = Number(store.get('bls_best_' + monthKey())) || 0;
-const boardBlock = `<div class="board-wrap"><div class="board-head"><div class="eyebrow">Ranking · TOP 10</div><div class="seg seg-sm" role="group" aria-label="ランキングの期間"><button type="button" data-act="period" data-p="month">月間</button><button type="button" data-act="period" data-p="year">年間</button></div></div><p class="board-period"></p><ol class="board"></ol><p class="board-note" hidden></p></div>`;
+const periodLabel = k => { const d = jstNow(); if (k === 'stage'){ const m = monthlyNow(); return m ? `今月のステージ「${m.short}」の` : '今月のステージの'; } return k === 'month' ? `${d.getUTCMonth() + 1}月の本編・月間` : `${d.getUTCFullYear()}年の本編・年間`; };
+const curMode = () => (G && G.mode === 'monthly' && G.mcfg) ? G.mcfg.rankKey : 'main';
+const bestKey = () => 'bls_best_' + curMode() + '_' + monthKey();
+let myBest = 0;
+const boardBlock = `<div class="board-wrap"><div class="board-head"><div class="eyebrow">Ranking · TOP 10</div><div class="seg seg-sm" role="group" aria-label="ランキングの期間"><button type="button" data-act="period" data-p="month">月間</button><button type="button" data-act="period" data-p="year">年間</button><button type="button" data-act="period" data-p="stage">今月のステージ</button></div></div><p class="board-period"></p><ol class="board"></ol><p class="board-note" hidden></p></div>`;
 const cleanName = v => String(v == null ? '' : v).replace(/[\u0000-\u001f]/g, '').trim().slice(0, 12);
 async function sb(path, body){
   const headers = { apikey:CFG.supabaseKey, 'Content-Type':'application/json' };
@@ -1236,18 +1276,27 @@ async function loadBoard(force){
   if (!force && Date.now() - lastLoad < 15000) return;
   lastLoad = Date.now();
   try {
-    const q = k => sb(`scores?select=id,name,score&created_at=gte.${encodeURIComponent(periodStart(k))}&order=score.desc,created_at.asc&limit=60`);
-    const [m, y] = await Promise.all([q('month'), q('year')]);
-    boards.month = topByName(m); boards.year = topByName(y); rankError = false;
+    const m0 = monthlyNow(), base = 'scores?select=id,name,score&order=score.desc,created_at.asc&limit=60';
+    const since = k => `&created_at=gte.${encodeURIComponent(periodStart(k))}`;
+    const q = (k, mode) => sb(base + since(k) + (mode && modeColumn ? `&mode=eq.${mode}` : ''));
+    let m, y, s = [];
+    try { [m, y, s] = await Promise.all([q('month', 'main'), q('year', 'main'), m0 ? q('month', m0.rankKey) : []]); }
+    catch(e){
+      if (e.status !== 400) throw e;
+      // the mode column is not there yet: show every score as the main game and leave the monthly board empty
+      modeColumn = false; [m, y] = await Promise.all([q('month'), q('year')]); s = [];
+    }
+    boards.month = topByName(m); boards.year = topByName(y); boards.stage = topByName(s); rankError = false;
   } catch(e){ rankError = true; }
   rankReady = true; renderBoards();
 }
-function setPeriod(p){ period = p === 'year' ? 'year' : 'month'; renderBoards(); }
+function setPeriod(p){ period = ['month','year','stage'].includes(p) ? p : 'month'; renderBoards(); }
 function renderBoards(){
   const board = boards[period];
   overlay.querySelectorAll('.board-wrap').forEach(w => {
     w.querySelectorAll('[data-act="period"]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.p === period)));
     w.querySelector('.board-period').textContent = periodLabel(period) + 'ランキング（同じ名前は最高記録だけ表示）';
+    const stageTab = w.querySelector('[data-p="stage"]'); if (stageTab) stageTab.hidden = !monthlyNow();
     const ol = w.querySelector('.board'), note = w.querySelector('.board-note');
     ol.replaceChildren();
     board.forEach((r, i) => {
@@ -1261,7 +1310,8 @@ function renderBoards(){
     if (!RANK_ON) msg = 'ランキングは準備中です。';
     else if (!rankReady) msg = 'ランキングを読み込み中…';
     else if (rankError && !board.length) msg = 'ランキングを読み込めませんでした。通信状況を確認してください。';
-    else if (!board.length) msg = period === 'month' ? '今月はまだ記録がありません。今月の1位を狙おう。' : '今年はまだ記録がありません。';
+    else if (period === 'stage' && !modeColumn) msg = '今月のステージのランキングは準備中です。';
+    else if (!board.length) msg = period === 'year' ? '今年はまだ記録がありません。' : '今月はまだ記録がありません。今月の1位を狙おう。';
     note.hidden = !msg; note.textContent = msg;
   });
   const top = boards.month[0], tw = $('#topWrap');
@@ -1269,9 +1319,12 @@ function renderBoards(){
 }
 function entryBlock(score){
   if (!RANK_ON || score <= 0) return '';
-  myBest = Number(store.get('bls_best_' + monthKey())) || 0;
-  if (myBest && score <= myBest) return `<p class="board-note">今月この端末から登録した最高記録：${myBest.toLocaleString()}（これを超えると登録できます）</p>`;
-  return `<form class="entry" data-score="${score}"><label for="nick">名前を入れて月間・年間ランキングに登録（12文字まで）</label><input id="nick" maxlength="12" autocomplete="nickname" placeholder="プレイヤー名"><button class="btn" type="submit">登録</button></form>`;
+  const monthly = curMode() !== 'main';
+  period = monthly ? 'stage' : 'month';
+  if (monthly && !modeColumn) return `<p class="board-note">今月のステージのランキングは準備中です。</p>`;
+  myBest = Number(store.get(bestKey())) || 0;
+  if (myBest && score <= myBest) return `<p class="board-note">今月この端末から登録した${monthly ? '今月のステージの' : ''}最高記録：${myBest.toLocaleString()}（これを超えると登録できます）</p>`;
+  return `<form class="entry" data-score="${score}" data-mode="${curMode()}"><label for="nick">名前を入れて${monthly ? '今月のステージの' : '月間・年間'}ランキングに登録（12文字まで）</label><input id="nick" maxlength="12" autocomplete="nickname" placeholder="プレイヤー名"><button class="btn" type="submit">登録</button></form>`;
 }
 overlay.addEventListener('submit', async e => {
   e.preventDefault();
@@ -1279,9 +1332,10 @@ overlay.addEventListener('submit', async e => {
   const name = cleanName(input.value) || 'NO NAME';
   btn.disabled = true; btn.textContent = '登録中…'; store.set('bls_nick', name);
   try {
-    const id = await sb('rpc/submit_score', { p_name:name, p_score:score });
+    const mode = f.dataset.mode || 'main';
+    const id = await sb('rpc/submit_score', modeColumn ? { p_name:name, p_score:score, p_mode:mode } : { p_name:name, p_score:score });
     if (id != null){ mine.add(id); store.set('bls_mine', JSON.stringify([...mine].slice(-50))); }
-    myBest = score; store.set('bls_best_' + monthKey(), String(score));
+    myBest = score; store.set(bestKey(), String(score));
     const p = document.createElement('p'); p.className = 'board-note'; p.textContent = `「${name}」で ${score.toLocaleString()} 点を登録しました。`;
     f.replaceWith(p); loadBoard(true);
   } catch(err){
@@ -1295,7 +1349,8 @@ function fillNick(){ const i = overlay.querySelector('#nick'); if (i) i.value = 
 function hideOverlay(){ overlay.hidden = true; overlay.innerHTML = ''; }
 overlay.addEventListener('click', e => {
   const a = e.target.closest('[data-act]'); if (!a) return;
-  if (a.dataset.act === 'start'){ if (!store.get('bls_tut_seen') && !G){ showTutorial(0, 'first'); return; } newGame(); }
+  if (a.dataset.act === 'start'){ if (!store.get('bls_tut_seen') && !G){ pendingMode = 'main'; showTutorial(0, 'first'); return; } newGame(G ? G.mode : pendingMode); pendingMode = 'main'; }
+  if (a.dataset.act === 'monthly'){ if (!store.get('bls_tut_seen')){ pendingMode = 'monthly'; G = null; showTutorial(0, 'first'); return; } newGame('monthly'); }
   if (a.dataset.act === 'resume') togglePause();
   if (a.dataset.act === 'next') nextStage();
   if (a.dataset.act === 'mode') setMode(a.dataset.mode);
@@ -1305,11 +1360,19 @@ overlay.addEventListener('click', e => {
   if (a.dataset.act === 'tut-back') { if (tutFrom === 'pause') showPause(); else showTitle(); }
   if (a.dataset.act === 'title') { G = null; updatePanel(); showTitle(); playTrack('title'); }
 });
+let pendingMode = 'main';
+function monthlyBlock(){
+  const m = monthlyNow(); if (!m) return '';
+  return `<div class="monthly"><div class="eyebrow">今月のステージ${m.current ? '' : '（新しいステージは準備中）'}</div><h3>${m.title}</h3>
+    <p class="rule">${m.rule}</p><p>ボス「${m.bossName}」。本編とは別の、このステージだけのランキングで競います。</p>
+    <div class="row"><button class="btn" type="button" data-act="monthly">今月のステージに挑戦</button></div></div>`;
+}
 function showTitle(){
   showOverlay(`
     <div class="eyebrow">Prototype · ${LAST_STAGE} Stages</div>
     <h1 class="logo">BLUE LEAF<br><span>STRIKER</span></h1>
-    <div class="row"><button class="btn" type="button" data-act="start">スタート</button><button class="btn ghost" type="button" data-act="tut">あそびかた</button></div>
+    <div class="row"><button class="btn" type="button" data-act="start">本編スタート</button><button class="btn ghost" type="button" data-act="tut">あそびかた</button></div>
+    ${monthlyBlock()}
     ${modeBlock()}
     <p class="lead">リーフ型の機体で海底の洞窟を進む、横スクロールシューティングの試作版です。</p>
     <dl class="how">
@@ -1335,6 +1398,12 @@ function gameOver(){
 function stageClear(){
   playTrack('clear');
   G.state = 'clear'; const bonus = G.lives * 1000; G.score += bonus; updatePanel();
+  if (G.mode === 'monthly'){
+    showOverlay(`<div class="eyebrow">Monthly stage clear</div><h2 class="big">${G.mcfg.short} クリア！</h2>${endScores()}
+      ${entryBlock(G.score)}
+      <div class="row"><button class="btn" type="button" data-act="start">もう一度</button><button class="btn ghost" type="button" data-act="title">タイトルへ</button></div>${boardBlock}${studioBlock}`);
+    fillNick(); return;
+  }
   if (G.stage < LAST_STAGE){
     const n = G.stage + 1, NEXT_NOTE = { 2:'新アイテム SNIPER が登場します。', 3:'撃って壊せる壁と、後ろから来る敵が登場します。', 4:'一定の間隔で熱水を噴き上げる噴出孔と、飛び散る火山弾が登場します。', 5:'これまでのボス4体との連戦のあと、最後の敵が待っています。' };
     showOverlay(`<div class="eyebrow">Stage ${G.stage} clear</div><h2 class="big">コアを撃破！</h2>
