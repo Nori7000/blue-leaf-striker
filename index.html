@@ -56,6 +56,12 @@ canvas{display:block;border-radius:6px;outline:1px solid var(--line)}
 .cell.max{opacity:.35}
 #power{flex:none;width:100px;border:0;border-radius:8px;background:var(--leaf);color:var(--sea);font:700 13px var(--f-display);letter-spacing:.06em;cursor:pointer}
 #power:disabled{background:var(--reef);color:var(--mute);cursor:default}
+#power{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;line-height:1.1}
+#power small{font:500 10px var(--f-mono);letter-spacing:.04em}
+#power.ready{animation:ready 1s ease-in-out infinite;box-shadow:0 0 0 0 rgba(92,200,255,.6)}
+@keyframes ready{50%{box-shadow:0 0 0 6px rgba(92,200,255,0)}}
+#gauge{cursor:pointer}
+@media (prefers-reduced-motion:reduce){#power.ready{animation:none}}
 #overlay{position:fixed;inset:0;z-index:5;display:flex;align-items:flex-start;justify-content:center;padding:16px;background:rgba(6,23,34,.78);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);overflow:auto}
 .card{width:100%;max-width:440px;display:flex;flex-direction:column;gap:14px;margin:auto}
 .eyebrow{font-family:var(--f-mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--sun)}
@@ -123,7 +129,7 @@ canvas{display:block;border-radius:6px;outline:1px solid var(--line)}
   </div>
   <div id="panel">
     <div id="gauge" aria-label="パワーアップゲージ"></div>
-    <button id="power" type="button" disabled>POWER</button>
+    <button id="power" type="button" disabled><span>POWER</span><small id="powerItem"></small></button>
   </div>
 </div>
 <div id="overlay"></div>
@@ -230,7 +236,7 @@ function buildScript(){
 function newGame(){
   initAudio(); audioUnlocked = true; playTrack('stage');
   G = { state:'play', t:0, scroll:0, score:0, lives:2, gauge:-1, paused:false, p:null,
-        shots:[], eb:[], en:[], parts:[], caps:[], groups:{}, gid:0, eid:0,
+        shots:[], eb:[], en:[], parts:[], caps:[], texts:[], hinted:false, groups:{}, gid:0, eid:0,
         script:buildScript(), si:0, boss:null, bossDead:false, clearT:0, respawn:0, fireCd:0, misCd:0, shake:0 };
   TA = 0; spawnPlayer(); updatePanel(); hideOverlay();
 }
@@ -263,7 +269,9 @@ stage.addEventListener('pointermove', e => {
   G.p.x += dx * k; G.p.y += dy * k; clampP();
 });
 ['pointerup','pointercancel'].forEach(t => stage.addEventListener(t, e => { if (drag && e.pointerId === drag.id) drag = null; }));
-$('#power').addEventListener('click', usePower);
+/* pointerdown instead of click: phones drop the click when another finger is still on the screen */
+['#power', '#gauge'].forEach(sel => $(sel).addEventListener('pointerdown', e => { e.preventDefault(); usePower(); }));
+$('#power').addEventListener('click', e => { if (e.detail === 0) usePower(); }); // keyboard Enter/Space
 $('#pause').addEventListener('click', togglePause);
 $('#mute').addEventListener('click', () => { muted = !muted; $('#mute').textContent = muted ? '×' : '♪'; bgm.muted = muted; initAudio(); });
 document.addEventListener('visibilitychange', () => {
@@ -281,13 +289,16 @@ function canUse(i, p){
 function updatePanel(){
   const p = G && G.p, g = G ? G.gauge : -1;
   [...gaugeEl.children].forEach((c, i) => { c.classList.toggle('on', i === g); c.classList.toggle('max', !!p && !canUse(i, p)); });
-  $('#power').disabled = !(G && G.state === 'play' && p && g >= 0 && canUse(g, p));
+  const ready = !!(G && G.state === 'play' && p && g >= 0 && canUse(g, p));
+  $('#power').disabled = !ready; $('#power').classList.toggle('ready', ready);
+  $('#powerItem').textContent = G && g >= 0 ? GAUGE[g] : '';
 }
 function usePower(){
   if (!G || G.state !== 'play' || G.paused || !G.p || G.gauge < 0) return;
   const p = G.p, i = G.gauge;
   if (!canUse(i, p)) return;
   [() => p.spd++, () => p.missile = true, () => p.weapon = 't', () => p.weapon = 'b', () => p.opts++, () => p.shield = 3][i]();
+  floatText(p.x, p.y - 18, GAUGE[i] + (i === 0 ? ' ' + p.spd : '') + ' UP!', C.leaf);
   G.gauge = -1; sfx.power(); updatePanel();
 }
 
@@ -487,12 +498,15 @@ function update(dt){
     if (dx * dx + dy * dy < 44 * 44 || (Math.abs(dy) < 20 && G.p.x > bs.x - 64 && G.p.x < bs.x)) hurtPlayer();
   }
   if (G.p){
-    for (const c of G.caps){ if (!c.dead && d2(G.p, c) < 200){ c.dead = true; G.gauge = (G.gauge + 1) % 6; G.score += 50; sfx.pick(); updatePanel(); } }
+    for (const c of G.caps){ if (!c.dead && d2(G.p, c) < 200){ c.dead = true; G.gauge = (G.gauge + 1) % 6; G.score += 50; sfx.pick(); updatePanel();
+      floatText(G.p.x, G.p.y - 18, '→ ' + GAUGE[G.gauge], C.sun);
+      if (!G.hinted){ G.hinted = true; G.hint = 3.5; } } }
   }
 
   for (const q of G.parts){ q.l -= dt; q.x += (q.vx || 0) * dt; q.y += (q.vy || 0) * dt; if (q.vx){ q.vx *= .96; q.vy *= .96; } }
   G.shots = G.shots.filter(o => !o.dead); G.en = G.en.filter(o => !o.dead); G.eb = G.eb.filter(o => !o.dead);
   G.caps = G.caps.filter(o => !o.dead); G.parts = G.parts.filter(o => o.l > 0);
+  for (const s of G.texts){ s.l -= dt; s.y -= 22 * dt; } G.texts = G.texts.filter(s => s.l > 0); if (G.hint > 0) G.hint -= dt;
 
   if (G.bossDead){
     G.clearT -= dt;
@@ -618,7 +632,19 @@ function draw(){
     else { ctx.fillStyle = q.c; ctx.fillRect(q.x - 1, q.y - 1, 2.5, 2.5); }
   }
   ctx.globalAlpha = 1;
+  const mono = getComputedStyle(document.documentElement).getPropertyValue('--f-mono');
+  ctx.textAlign = 'center'; ctx.font = '700 11px ' + mono;
+  for (const s of G.texts){ ctx.globalAlpha = Math.min(1, s.l / .4); ctx.fillStyle = s.c; ctx.fillText(s.s, Math.max(40, Math.min(W - 40, s.x)), s.y); }
+  ctx.globalAlpha = 1;
+  if (G.hint > 0){
+    ctx.globalAlpha = Math.min(1, G.hint / .5);
+    ctx.fillStyle = 'rgba(6,23,34,.85)'; ctx.fillRect(W / 2 - 150, H - 58, 300, 30);
+    ctx.strokeStyle = C.sun; ctx.lineWidth = 1; ctx.strokeRect(W / 2 - 150, H - 58, 300, 30);
+    ctx.fillStyle = C.sun; ctx.font = '700 12px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-body');
+    ctx.fillText('下の POWER を押すと強化されます', W / 2, H - 38); ctx.globalAlpha = 1;
+  }
 }
+function floatText(x, y, s, c){ if (G) G.texts.push({ x, y, s, c, l:1.2 }); }
 
 /* ---------- HUD & overlays ---------- */
 const hudEls = { sc:$('#sc'), hi:$('#hi'), lv:$('#lv') }, hudLast = {};
