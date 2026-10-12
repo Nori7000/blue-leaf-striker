@@ -273,18 +273,53 @@ const MONTHLY = {
     endT:70, boss:'jelly', bossName:'パンプキン・ジェリー',
     tint:{ bell:'rgba(255,140,40,.55)', line:'#ffc27a', tent:'#ff9a3c' },
     lives:0, capsX2:true, startItems:['SPEED'],
+    tag:'1機勝負',
     rule:'残機なしの1機勝負。そのかわりカプセルが2倍出て、最初から SPEED が1段階付いています。'
+  },
+  '2026-11': {
+    title:'11月：うねる海底トンネル', short:'海底トンネル', base:1,
+    look:{ reef:'#0f2e3a', edge:'#7fe0c8' },
+    // tunnel keyframes: the passage's centre height and width, eased from one keyframe to the next over len px, then loops
+    tunnel:[
+      { len:520, center:180, width:250 }, { len:420, center:235, width:200 }, { len:360, center:150, width:150 },
+      { len:460, center:215, width:118 }, { len:380, center:265, width:165 }, { len:440, center:120, width:140 },
+      { len:500, center:180, width:230 }
+    ],
+    // underwater: the ship slowly sinks and is pushed back by the current
+    swim:{ sink:32, current:-14 },
+    order:['fan','dash','carrier','fanLow','turrets','fan','rear','carrier','dash','fanLow','carrier','fan'],
+    endT:70, boss:'worm', bossName:'トンネル・ワーム',
+    lives:1, capsX2:false, startItems:[],
+    tag:'うねる地形・水流',
+    rule:'天井と床がうねりながら上下し、通り道の幅も広がったり狭まったりする海底トンネル。水の中なので機体は少しずつ沈み、流れで後ろへ押されます。残機1。'
   }
 };
 const jstMonth = () => { const d = new Date(Date.now() + 9 * 3600e3); return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0'); };
+// '#preview-2026-11' in the address lets the owner try a future month early; scores are not registered then
+const previewKey = (() => { const m = /^#preview-(\d{4}-\d{2})$/.exec(location.hash || ''); return m && MONTHLY[m[1]] ? m[1] : null; })();
 function monthlyNow(){
   const cur = jstMonth(), keys = Object.keys(MONTHLY).sort();
-  const key = MONTHLY[cur] ? cur : keys.filter(k => k <= cur).pop() || keys[0];
-  return key ? { key, rankKey:'monthly-' + key, current:key === cur, ...MONTHLY[key] } : null;
+  const key = previewKey || (MONTHLY[cur] ? cur : keys.filter(k => k <= cur).pop() || keys[0]);
+  return key ? { key, rankKey:'monthly-' + key, current:key === cur, preview:!!previewKey && key !== cur, ...MONTHLY[key] } : null;
 }
+/* tunnel terrain: returns the passage top/bottom at world x (eased between keyframes). TA < 1 opens it up (stage start, boss) */
+function tunnelAt(wx, segs){
+  const total = segs.reduce((s, a) => s + a.len, 0); let x = ((wx % total) + total) % total;
+  for (let i = 0; i < segs.length; i++){
+    const a = segs[i], b = segs[(i + 1) % segs.length];
+    if (x <= a.len){
+      const f = (1 - Math.cos(Math.PI * x / a.len)) / 2, c = a.center + (b.center - a.center) * f, w = a.width + (b.width - a.width) * f;
+      return { top:Math.max(0, c - w / 2) * TA, bot:H - Math.max(0, H - (c + w / 2)) * TA };
+    }
+    x -= a.len;
+  }
+  return { top:0, bot:H };
+}
+const tunnelCfg = () => G && G.mcfg && G.mcfg.tunnel;
 const stepQ = v => Math.round(v / 12) * 12;
 const tri = v => Math.abs((((v % 1) + 1) % 1) * 2 - 1); // 0..1 sawtooth-like triangle wave for jagged rock
-const ceilY  = wx => stg() === 5
+const ceilY  = wx => tunnelCfg() ? tunnelAt(wx, G.mcfg.tunnel).top
+  : stg() === 5
   ? TA * (16 + 30 * Math.abs(Math.sin(wx * .012)) ** 3)
   : stg() === 4
   ? TA * (18 + 24 * tri(wx / 96) + 16 * (1 + Math.sin(wx * .007)) * .5)
@@ -293,7 +328,8 @@ const ceilY  = wx => stg() === 5
   : stg() === 2
   ? TA * (18 + 26 * (1 + Math.sin(wx * .014 + .7)) * .5 + 30 * (1 + Math.sin(wx * .0052)) * .5)
   : TA * (14 + 18 * (1 + Math.sin(wx * .011)) * .5 + 22 * (1 + Math.sin(wx * .0047 + 1.3)) * .5);
-const floorY = wx => stg() === 5
+const floorY = wx => tunnelCfg() ? tunnelAt(wx, G.mcfg.tunnel).bot
+  : stg() === 5
   ? H - TA * (16 + 30 * Math.abs(Math.sin(wx * .012)) ** 3)
   : stg() === 4
   ? H - TA * (22 + 26 * tri(wx / 84 + .4) + 18 * (1 + Math.sin(wx * .006 + 2)) * .5)
@@ -448,11 +484,15 @@ const modeBlock = () => `<div class="mode"><div class="mode-row"><span class="lb
   <p class="mode-desc">${modeDesc()}</p></div>`;
 
 /* ---------- spawning ---------- */
-const band = () => 110 + Math.random() * 140;
+// spawn height: inside the passage where the enemy enters (matters for tunnel stages, a no-op elsewhere)
+function band(){
+  const wx = G.scroll + W + 20, lo = Math.max(110, ceilY(wx) + 34), hi = Math.min(250, floorY(wx) - 34);
+  return hi > lo ? lo + Math.random() * (hi - lo) : (ceilY(wx) + floorY(wx)) / 2;
+}
 function spawn(type){
   if (type === 'fan' || type === 'fanLow'){
     const g = G.gid++; G.groups[g] = { n:5, k:0 };
-    const yb = type === 'fanLow' ? 230 : band() * .8 + 20, ph = Math.random() * 6;
+    const yb = tunnelCfg() ? band() : type === 'fanLow' ? 230 : band() * .8 + 20, ph = Math.random() * 6;
     const st2 = G.stage >= 2;
     for (let i = 0; i < 5; i++) G.en.push({ id:G.eid++, kind:'fan', x:W + 20 + i * 30, y:yb, yb, ph, r:9, hp:1, vx:st2 ? -140 : -125, sc:st2 ? 120 : 100, g, t:0, shooter:st2 && i % 2 === 0, cd:1 + Math.random() * 1.5 });
   } else if (type === 'dash'){
@@ -579,6 +619,11 @@ function updatePlayer(dt){
   if (keys.arrowleft || keys.a) mx--; if (keys.arrowright || keys.d) mx++;
   if (keys.arrowup || keys.w) my--;   if (keys.arrowdown || keys.s) my++;
   if (mx || my){ const l = Math.hypot(mx, my); p.x += mx / l * sp * dt; p.y += my / l * sp * dt; }
+  const sw = G.mcfg && G.mcfg.swim;
+  if (sw && !(G.boss && G.bossDead)){
+    p.y += sw.sink * dt; p.x += sw.current * dt;
+    if (Math.random() < dt * 4) G.parts.push({ bubble:true, x:p.x - 14, y:p.y - 2, vx:-20, vy:-30, l:1.2, m:1.2, c:'#d2f2ff' });
+  }
   clampP();
   const last = p.hist[p.hist.length - 1];
   if (!last || Math.abs(last.x - p.x) + Math.abs(last.y - p.y) > 1){ p.hist.push({ x:p.x, y:p.y }); if (p.hist.length > 40) p.hist.shift(); }
@@ -1063,6 +1108,10 @@ function drawBg(scroll){
     const k = l ? .5 : .2, s = l ? 2 : 1.4;
     for (const d of layer){ const x = ((d.x - scroll * k) % 800 + 800) % 800; if (x < W) ctx.fillRect(x, d.y, s, s); }
   });
+  if (G && G.mcfg && G.mcfg.swim){
+    ctx.strokeStyle = 'rgba(210,242,255,.25)'; ctx.lineWidth = 1;
+    for (const d of dots[1]){ const x = ((d.x - scroll * .3) % 800 + 800) % 800, y = ((d.y - G.t * 40 * (1 + d.x % 3 * .3)) % H + H) % H; if (x < W){ ctx.beginPath(); ctx.arc(x, y, 1.5 + d.x % 2, 0, 6.283); ctx.stroke(); } }
+  }
 }
 function drawTerrain(scroll){
   if (TA <= .01) return;
@@ -1194,7 +1243,8 @@ function draw(){
   }
   for (const q of G.parts){
     ctx.globalAlpha = Math.max(0, q.l / q.m);
-    if (q.ring){ ctx.strokeStyle = q.c; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(q.x, q.y, 4 + (1 - q.l / q.m) * q.R, 0, 6.283); ctx.stroke(); }
+    if (q.bubble){ ctx.strokeStyle = q.c; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(q.x, q.y, 2.5, 0, 6.283); ctx.stroke(); }
+    else if (q.ring){ ctx.strokeStyle = q.c; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(q.x, q.y, 4 + (1 - q.l / q.m) * q.R, 0, 6.283); ctx.stroke(); }
     else { ctx.fillStyle = q.c; ctx.fillRect(q.x - 1, q.y - 1, 2.5, 2.5); }
   }
   ctx.globalAlpha = 1;
@@ -1207,7 +1257,7 @@ function draw(){
     ctx.fillStyle = C.sun; ctx.font = '700 22px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-display');
     ctx.fillText(G.mcfg ? '今月のステージ' : 'STAGE ' + G.stage, W / 2, H / 2 - 8);
     ctx.font = '500 12px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-body'); ctx.fillStyle = C.ink;
-    ctx.fillText(G.mcfg ? G.mcfg.title + ' ・ 1機勝負' : STAGES[G.stage].sub, W / 2, H / 2 + 16); ctx.globalAlpha = 1;
+    ctx.fillText(G.mcfg ? G.mcfg.title + ' ・ ' + (G.mcfg.tag || '') : STAGES[G.stage].sub, W / 2, H / 2 + 16); ctx.globalAlpha = 1;
   }
   if (G.rushN > 0 && G.boss && !G.bossDead){
     ctx.textAlign = 'center'; ctx.fillStyle = C.sun; ctx.font = '700 11px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-mono');
@@ -1319,6 +1369,7 @@ function renderBoards(){
 }
 function entryBlock(score){
   if (!RANK_ON || score <= 0) return '';
+  if (G && G.mcfg && G.mcfg.preview) return `<p class="board-note">プレビュー中のステージなので、ランキングには登録されません。</p>`;
   const monthly = curMode() !== 'main';
   period = monthly ? 'stage' : 'month';
   if (monthly && !modeColumn) return `<p class="board-note">今月のステージのランキングは準備中です。</p>`;
@@ -1363,7 +1414,7 @@ overlay.addEventListener('click', e => {
 let pendingMode = 'main';
 function monthlyBlock(){
   const m = monthlyNow(); if (!m) return '';
-  return `<div class="monthly"><div class="eyebrow">今月のステージ${m.current ? '' : '（新しいステージは準備中）'}</div><h3>${m.title}</h3>
+  return `<div class="monthly"><div class="eyebrow">今月のステージ${m.preview ? '（プレビュー・ランキング登録なし）' : m.current ? '' : '（新しいステージは準備中）'}</div><h3>${m.title}</h3>
     <p class="rule">${m.rule}</p><p>ボス「${m.bossName}」。本編とは別の、このステージだけのランキングで競います。</p>
     <div class="row"><button class="btn" type="button" data-act="monthly">今月のステージに挑戦</button></div></div>`;
 }
