@@ -285,7 +285,7 @@ function newGame(){
   resetStage(); spawnPlayer(); hideOverlay();
 }
 function resetStage(){
-  Object.assign(G, { state:'play', t:0, scroll:0, gauge:-1, flashIdx:-1, flashT:0, shots:[], eb:[], en:[], parts:[], caps:[], texts:[], blocks:[],
+  Object.assign(G, { state:'play', t:0, scroll:0, gauge:-1, flashIdx:-1, flashT:0, shots:[], eb:[], en:[], parts:[], caps:[], texts:[], blocks:[], walls:{}, wallId:0,
     groups:{}, gid:0, eid:0, script:buildScript(G.stage), si:0, boss:null, bossDead:false, clearT:0, respawn:0,
     fireCd:0, misCd:0, snCd:0, shake:0, banner:2.5 });
   GAUGE = gaugeList(G.stage); buildGauge(); TA = 0; updatePanel();
@@ -419,8 +419,9 @@ function spawn(type){
     // a breakable bulkhead from ceiling to floor, two blocks thick; one block hides a capsule
     const wx = G.scroll + W + 30, top = ceilY(wx), bot = floorY(wx), S = 14;
     const rows = Math.floor((bot - top) / S), chest = 2 + Math.floor(Math.random() * Math.max(1, rows - 4));
+    const w = G.wallId++; G.walls[w] = { n:rows * 2, k:0, lost:false };
     for (let c = 0; c < 2; c++) for (let r = 0; r < rows; r++)
-      G.blocks.push({ wx:wx + c * S, y:top + r * S + S / 2, hp:2, chest:c === 0 && r === chest, x:W + 30 });
+      G.blocks.push({ wx:wx + c * S, y:top + r * S + S / 2, hp:2, chest:c === 0 && r === chest, x:W + 30, w });
   } else if (type === 'boss'){
     playTrack('boss');
     G.boss = G.stage === 3
@@ -560,7 +561,12 @@ function shotVsBoss(s){
 }
 function hitBlock(k, dmg){
   k.hp -= dmg; sfx.hit();
-  if (k.hp <= 0){ k.dead = true; G.score += 20; burst(k.x, k.y, k.chest ? C.sun : terrCol('edge'), 6, .6); if (k.chest) dropCap(k.x, k.y); }
+  if (k.hp <= 0){
+    k.dead = true; G.score += 20; burst(k.x, k.y, k.chest ? C.sun : terrCol('edge'), 6, .6); if (k.chest) dropCap(k.x, k.y);
+    floatText(k.x, k.y - 6, '+20', C.ink, .6, 9);
+    const wl = G.walls[k.w];
+    if (wl && !wl.lost && ++wl.k === wl.n){ G.score += 1000; sfx.power(); G.shake = .25; floatText(W / 2, H / 2 - 30, 'WALL CLEAR +1000', C.sun, 1.8, 16); }
+  }
 }
 function shotVsBlocks(s){
   for (const k of G.blocks){
@@ -747,7 +753,7 @@ function update(dt){
     if ((e.kind === 'rear' ? e.x > W + 40 : e.x < -40) || e.y < -40 || e.y > H + 40) e.dead = true;
   }
   updateBoss(dt);
-  for (const k of G.blocks){ k.x = k.wx - G.scroll; if (k.x < -20) k.dead = true; }
+  for (const k of G.blocks){ k.x = k.wx - G.scroll; if (k.x < -20){ k.dead = true; if (G.walls[k.w]) G.walls[k.w].lost = true; } }
 
   for (const s of G.shots){
     if (s.dead) continue;
@@ -942,7 +948,7 @@ function draw(){
   ctx.globalAlpha = 1;
   const mono = getComputedStyle(document.documentElement).getPropertyValue('--f-mono');
   ctx.textAlign = 'center'; ctx.font = '700 11px ' + mono;
-  for (const s of G.texts){ ctx.globalAlpha = Math.min(1, s.l / .4); ctx.fillStyle = s.c; ctx.fillText(s.s, Math.max(40, Math.min(W - 40, s.x)), s.y); }
+  for (const s of G.texts){ ctx.globalAlpha = Math.min(1, s.l / .4); ctx.fillStyle = s.c; ctx.font = '700 ' + (s.size || 11) + 'px ' + mono; const half = ctx.measureText(s.s).width / 2 + 6; ctx.fillText(s.s, Math.max(half, Math.min(W - half, s.x)), s.y); }
   ctx.globalAlpha = 1;
   if (G.banner > 0){
     ctx.globalAlpha = Math.min(1, G.banner / .6); ctx.textAlign = 'center';
@@ -966,7 +972,7 @@ function draw(){
     ctx.fillText('下の POWER を押すと強化されます', W / 2, H - 38); ctx.globalAlpha = 1;
   }
 }
-function floatText(x, y, s, c){ if (G) G.texts.push({ x, y, s, c, l:1.2 }); }
+function floatText(x, y, s, c, life = 1.2, size = 11){ if (G) G.texts.push({ x, y, s, c, l:life, size }); }
 
 /* ---------- HUD & overlays ---------- */
 const hudEls = { sc:$('#sc'), hi:$('#hi'), lv:$('#lv'), st:$('#st') }, hudLast = {};
@@ -1139,7 +1145,7 @@ const TUT_PAGES = [
     <div class="tut-item"><canvas data-fig="en-jelly" style="height:120px"></canvas><h3>STAGE 2 ボス「深淵クラゲ」 <small>撃破 10,000点</small></h3><p>弱点は体の中の赤い核。ふだんはかさに守られていて、ふくらんで「OPEN」と出ている間だけ弾が届きます。開く瞬間に全方向へ弾を放つので、少し離れて待ちましょう。下にたれた触手にふれてもミス。核に24発で撃破。</p></div>
     <p class="tut-note">STAGE 2「深海の裂け目」：洞窟がせまくなり、砲台が増えます。中心が白い編隊は弾を撃ってきます。</p>
     <div class="tut-list two">
-      <div class="tut-item"><canvas data-fig="en-wall"></canvas><h3>壊せる壁 <small>STAGE 3 ・ 1個20点</small></h3><p>天井から床までふさぐブロックの壁。1個を弾2発で壊せます。黄色いブロックは宝箱で、壊すとカプセルが出ます。</p></div>
+      <div class="tut-item"><canvas data-fig="en-wall"></canvas><h3>壊せる壁 <small>STAGE 3 ・ 1個20点 ・ 全部で +1000点</small></h3><p>天井から床までふさぐブロックの壁。1個を弾2発で壊せます。黄色いブロックは宝箱で、壊すとカプセルが出ます。1枚の壁を画面から消える前に全部壊すと「WALL CLEAR」で +1000点のボーナス。</p></div>
       <div class="tut-item"><canvas data-fig="en-rear"></canvas><h3>後方機 <small>STAGE 3 ・ 150点</small></h3><p>画面の左（自機の後ろ）から4機で現れ、右へ追い抜いていきます。前ばかり見ていると危険。SNIPER がいると楽に倒せます。</p></div>
     </div>
     <div class="tut-item"><canvas data-fig="en-fort" style="height:130px"></canvas><h3>STAGE 3 ボス「幽霊戦艦」 <small>砲台 800点 / 撃破 10,000点</small></h3><p>上下の砲台（赤い丸）が3連射でねらってきます。砲台を2つとも壊すと、船体の窓のシャッターが開き、そこが弱点になります。窓に24発で撃破。戦いの間ずっと後方機を呼ぶので、後ろにも注意。</p></div>
