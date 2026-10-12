@@ -424,10 +424,11 @@ function spawn(type){
   } else if (type === 'boss'){
     playTrack('boss');
     G.boss = G.stage === 3
-      ? { x:W + 90, y:H / 2, t:0, hp:36, plates:[6,6,6,6], cd:2, vol:0, flash:0, dead:false, mk:3, call:4 }
+      ? { type:'fort', x:W + 110, y:H / 2, t:0, hp:24, cannons:[{ dy:-64, hp:12, cd:1.5 }, { dy:64, hp:12, cd:2.4 }], cd:2, call:4, flash:0, dead:false }
       : G.stage === 2
-      ? { x:W + 90, y:H / 2, t:0, hp:32, plates:[6,6,6,6], cd:2, vol:0, flash:0, dead:false, mk:2 }
-      : { x:W + 90, y:H / 2, t:0, hp:24, plates:[5,5,5], cd:2, vol:0, flash:0, dead:false, mk:1 };
+      ? { type:'jelly', x:W + 90, y:H / 2, t:0, hp:24, cd:1.6, wasOpen:false, flash:0, dead:false }
+      : { type:'core', x:W + 90, y:H / 2, t:0, hp:24, plates:[5,5,5], cd:2, vol:0, flash:0, dead:false, mk:1 };
+    G.bossBanner = 2.6;
   }
 }
 function aim(x, y, spd){
@@ -487,11 +488,7 @@ function sniperTarget(s){
   let best = null, bd = 1e9;
   for (const e of G.en){ if (e.dead || e.x < 0 || e.x > W) continue; const d = d2(s, e); if (d < bd){ bd = d; best = e; } }
   const b = G.boss;
-  if (b && !b.dead && b.x < W){
-    const i = b.plates.findIndex(v => v > 0);
-    const t = i >= 0 ? { x:plateX(b, i), y:b.y } : { x:b.x - 22, y:b.y };
-    const d = d2(s, t); if (d < bd){ bd = d; best = t; }
-  }
+  if (b && !b.dead && b.x < W){ const t = bossWeakPoint(b); const d = d2(s, t); if (d < bd){ bd = d; best = t; } }
   return best;
 }
 function killPlayer(){
@@ -527,6 +524,8 @@ function updatePlayer(dt){
 /* ---------- boss ---------- */
 function updateBoss(dt){
   const b = G.boss; if (!b || b.dead) return;
+  if (b.type === 'jelly') return updateJelly(b, dt);
+  if (b.type === 'fort') return updateFort(b, dt);
   b.t += dt; b.x += (W - 120 - b.x) * Math.min(1, dt * 1.2); b.y = H / 2 + (b.mk >= 2 ? 95 : 80) * Math.sin(b.t * (b.mk >= 2 ? 1 : .8));
   if (b.mk === 3 && b.x < W - 60){ b.call -= dt; if (b.call <= 0){ b.call = 5; spawn('rear'); } }
   b.flash = Math.max(0, b.flash - dt); b.cd -= dt;
@@ -538,6 +537,8 @@ function updateBoss(dt){
 }
 function shotVsBoss(s){
   const b = G.boss; if (!b || b.dead || b.x > W + 40) return;
+  if (b.type === 'jelly') return shotVsJelly(b, s);
+  if (b.type === 'fort') return shotVsFort(b, s);
   for (let i = 0; i < b.plates.length; i++){
     if (b.plates[i] <= 0) continue;
     const px = plateX(b, i);
@@ -569,6 +570,140 @@ function shotVsBlocks(s){
     s.dead = true; hitBlock(k, s.k === 'm' ? 2 : 1); return;
   }
 }
+
+/* ---------- boss: shared helpers ---------- */
+const BOSS_NAME = { core:'コア', jelly:'深淵クラゲ', fort:'幽霊戦艦' };
+function bossWeakPoint(b){
+  if (b.type === 'jelly') return { x:b.x - 4, y:b.y + 6 };
+  if (b.type === 'fort'){ const c = b.cannons.find(c => c.hp > 0); return c ? { x:b.x - 40, y:b.y + c.dy } : { x:b.x - 38, y:b.y }; }
+  const i = b.plates.findIndex(v => v > 0); return i >= 0 ? { x:plateX(b, i), y:b.y } : { x:b.x - 22, y:b.y };
+}
+function bossTouches(b, p){
+  if (b.type === 'jelly'){
+    const open = jellyOpen(b), by = b.y - (open ? 16 : 0);
+    if (((p.x - b.x) / 46) ** 2 + ((p.y - by) / (open ? 30 : 36)) ** 2 < 1) return true;
+    for (const q of tentaclePts(b)) if (d2(p, q) < 64) return true;
+    return false;
+  }
+  if (b.type === 'fort'){
+    if (p.x > b.x - 30 && p.x < b.x + 90 && Math.abs(p.y - b.y) < 96) return true;
+    return b.cannons.some(c => c.hp > 0 && d2(p, { x:b.x - 40, y:b.y + c.dy }) < 16 * 16);
+  }
+  const dx = p.x - (b.x + 14), dy = p.y - b.y;
+  return dx * dx + dy * dy < 44 * 44 || (Math.abs(dy) < 20 && p.x > plateX(b, 0) - 6 && p.x < b.x);
+}
+function damageBoss(b, s, dmg){
+  s.dead = true; b.hp -= dmg; b.flash = .08; sfx.hit();
+  if (b.hp <= 0) killBoss();
+}
+
+/* ---------- boss 2: 深淵クラゲ (pulsing jellyfish; the nucleus is only exposed while the bell is open) ---------- */
+const jellyOpen = b => (b.t % 4) > 2.5;
+function tentaclePts(b){
+  const pts = [], open = jellyOpen(b);
+  for (let i = 0; i < 5; i++){
+    const tx = b.x - 28 + i * 14;
+    for (let j = 1; j <= 4; j++) pts.push({ x:tx + Math.sin(b.t * 3 + i + j * .6) * 7 * j / 4, y:b.y + (open ? 14 : 22) + j * 14 });
+  }
+  return pts;
+}
+function updateJelly(b, dt){
+  b.t += dt; b.x += (W - 130 - b.x) * Math.min(1, dt * 1.1); b.y = H / 2 + 70 * Math.sin(b.t * .6);
+  b.flash = Math.max(0, b.flash - dt);
+  if (b.x > W - 50) return;
+  const open = jellyOpen(b);
+  if (open && !b.wasOpen){ for (let k = 0; k < 12; k++){ const a = k / 12 * 6.283 + b.t; G.eb.push({ x:b.x - 4, y:b.y + 6, vx:Math.cos(a) * 110, vy:Math.sin(a) * 110 }); } }
+  b.wasOpen = open;
+  if (!open){ b.cd -= dt; if (b.cd <= 0){ b.cd = 1.6; aim(b.x - 30, b.y, 160); aim(b.x - 30, b.y + 12, 140); } }
+}
+function shotVsJelly(b, s){
+  const open = jellyOpen(b), nx = b.x - 4, ny = b.y + 6;
+  if (open){
+    const hit = s.k === 'b' ? Math.abs(s.y - ny) < 12 && s.x >= nx - 11 && s.x - s.len <= nx + 11 : d2(s, { x:nx, y:ny }) < 13 * 13;
+    if (hit) return damageBoss(b, s, s.k === 'm' ? 2 : 1);
+    if (Math.abs(s.y - ny) < 13) return; // the raised bell leaves a clear path to the nucleus
+  }
+  const by = b.y - (open ? 16 : 0);
+  if (((s.x - b.x) / 44) ** 2 + ((s.y - by) / (open ? 28 : 34)) ** 2 < 1){ s.dead = true; if (!open) b.flash = .03; }
+}
+function drawJelly(b){
+  const open = jellyOpen(b), lift = open ? 16 : 0, pulse = 1 + .05 * Math.sin(b.t * 6);
+  ctx.save();
+  // tentacles
+  ctx.strokeStyle = '#b48cff'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  for (let i = 0; i < 5; i++){
+    const tx = b.x - 28 + i * 14; ctx.beginPath(); ctx.moveTo(tx, b.y + 14 - lift * .5);
+    for (let j = 1; j <= 4; j++) ctx.lineTo(tx + Math.sin(b.t * 3 + i + j * .6) * 7 * j / 4, b.y + (open ? 14 : 22) + j * 14);
+    ctx.stroke();
+  }
+  // nucleus
+  ctx.fillStyle = b.flash > 0 ? C.ink : C.coral; ctx.globalAlpha = open ? .8 + .2 * Math.sin(b.t * 12) : .35;
+  ctx.beginPath(); ctx.arc(b.x - 4, b.y + 6, 10, 0, 6.283); ctx.fill(); ctx.globalAlpha = 1;
+  // bell
+  ctx.translate(b.x, b.y - lift); ctx.scale(pulse, 1 / pulse);
+  ctx.fillStyle = 'rgba(120,90,200,.55)'; ctx.strokeStyle = b.flash > 0 ? C.ink : '#c9b2ff'; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.ellipse(0, 0, 44, 34, 0, Math.PI, 0); ctx.quadraticCurveTo(22, 14, 0, 10); ctx.quadraticCurveTo(-22, 14, -44, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.globalAlpha = .45; ctx.lineWidth = 1.2; for (let k = -2; k <= 2; k++){ ctx.beginPath(); ctx.moveTo(k * 12, 8); ctx.quadraticCurveTo(k * 16, -14, k * 6, -30); ctx.stroke(); }
+  ctx.restore();
+  if (open){ ctx.fillStyle = C.sun; ctx.font = '700 10px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-mono'); ctx.textAlign = 'center'; ctx.fillText('OPEN', b.x - 4, b.y + 30); }
+}
+
+/* ---------- boss 3: 幽霊戦艦 (wrecked battleship; destroy both cannons to open the bridge) ---------- */
+function updateFort(b, dt){
+  b.t += dt; b.x += (W - 110 - b.x) * Math.min(1, dt * .9); b.y = H / 2 + 20 * Math.sin(b.t * .5);
+  b.flash = Math.max(0, b.flash - dt);
+  if (b.x > W - 40) return;
+  for (const c of b.cannons){
+    if (c.hp <= 0) continue; c.cd -= dt;
+    if (c.cd <= 0){ c.cd = 1.9; c.left = 3; c.gap = 0; }
+    if (c.left > 0){ c.gap -= dt; if (c.gap <= 0){ c.gap = .14; c.left--; aim(b.x - 52, b.y + c.dy, 175); } }
+  }
+  b.call -= dt; if (b.call <= 0){ b.call = 6; spawn('rear'); }
+  if (b.cannons.every(c => c.hp <= 0)){
+    b.cd -= dt;
+    if (b.cd <= 0){ b.cd = 1.3; for (let k = -3; k <= 3; k++){ const a = Math.PI + k * .2; G.eb.push({ x:b.x - 46, y:b.y, vx:Math.cos(a) * 150, vy:Math.sin(a) * 150 }); } }
+  }
+}
+function shotVsFort(b, s){
+  for (const c of b.cannons){
+    if (c.hp <= 0) continue;
+    const cx = b.x - 40, cy = b.y + c.dy;
+    const hit = s.k === 'b' ? Math.abs(s.y - cy) < 14 && s.x >= cx - 13 && s.x - s.len <= cx + 13 : d2(s, { x:cx, y:cy }) < 14 * 14;
+    if (!hit) continue;
+    s.dead = true; c.hp -= s.k === 'm' ? 2 : 1; b.flash = .05; sfx.hit();
+    if (c.hp <= 0){ burst(cx, cy, '#d39a5b', 24, 1.2); G.score += 800; sfx.small(); }
+    return;
+  }
+  const open = b.cannons.every(c => c.hp <= 0);
+  if (open && Math.abs(s.y - b.y) < 16 && s.x >= b.x - 48 && (s.k === 'b' ? s.x - s.len <= b.x - 30 : s.x <= b.x - 28)) return damageBoss(b, s, s.k === 'm' ? 2 : 1);
+  if (s.x > b.x - 32 && s.x < b.x + 92 && Math.abs(s.y - b.y) < 96) s.dead = true;
+}
+function drawFort(b){
+  const rust = '#d39a5b', hull = '#3a2a20', open = b.cannons.every(c => c.hp <= 0);
+  ctx.save();
+  // hull with decks and rivets
+  ctx.fillStyle = hull; ctx.strokeStyle = b.flash > 0 ? C.ink : rust; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(b.x - 30, b.y - 90); ctx.lineTo(b.x + 90, b.y - 96); ctx.lineTo(b.x + 90, b.y + 96); ctx.lineTo(b.x - 30, b.y + 90); ctx.lineTo(b.x - 44, b.y + 30); ctx.lineTo(b.x - 44, b.y - 30); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.lineWidth = 1; ctx.globalAlpha = .45;
+  for (const dy of [-54, -18, 18, 54]){ ctx.beginPath(); ctx.moveTo(b.x - 26, b.y + dy); ctx.lineTo(b.x + 90, b.y + dy); ctx.stroke(); }
+  ctx.fillStyle = rust; for (let i = 0; i < 6; i++) for (const dy of [-72, 72]) ctx.fillRect(b.x - 10 + i * 16, b.y + dy, 2, 2);
+  ctx.globalAlpha = 1;
+  // bridge window (weak point)
+  ctx.fillStyle = open ? (b.flash > 0 ? C.ink : C.coral) : '#5a4a3e'; ctx.globalAlpha = open ? .75 + .25 * Math.sin(b.t * 10) : 1;
+  ctx.fillRect(b.x - 48, b.y - 12, 18, 24); ctx.globalAlpha = 1;
+  if (!open){ ctx.strokeStyle = rust; ctx.lineWidth = 1.5; for (let k = 0; k < 4; k++){ ctx.beginPath(); ctx.moveTo(b.x - 48, b.y - 9 + k * 6); ctx.lineTo(b.x - 30, b.y - 9 + k * 6); ctx.stroke(); } }
+  // cannons
+  for (const c of b.cannons){
+    const cx = b.x - 40, cy = b.y + c.dy;
+    if (c.hp <= 0){ ctx.fillStyle = '#2a1f18'; ctx.beginPath(); ctx.arc(cx, cy, 10, 0, 6.283); ctx.fill(); continue; }
+    const tg = G && G.p, a = tg ? Math.atan2(tg.y - cy, tg.x - cx) : Math.PI;
+    ctx.save(); ctx.translate(cx, cy); ctx.rotate(a); ctx.fillStyle = rust; ctx.fillRect(4, -3, 18, 6); ctx.restore();
+    ctx.fillStyle = b.flash > 0 ? C.ink : C.coral; ctx.beginPath(); ctx.arc(cx, cy, 12, 0, 6.283); ctx.fill();
+    ctx.strokeStyle = rust; ctx.lineWidth = 2; ctx.stroke();
+  }
+  ctx.restore();
+}
+
 const plateX = (b, i) => b.x - 38 - (b.plates.length - 1 - i) * 10;
 function killBoss(){
   stopTrack();
@@ -647,10 +782,7 @@ function update(dt){
     for (const b of G.eb){ if (b.dead || G.p.inv > 0) continue; if (d2(G.p, b) < 30){ b.dead = true; hurtPlayer(); if (!G.p) break; } }
   }
   const bs = G.boss;
-  if (G.p && bs && !bs.dead && G.p.inv <= 0){
-    const dx = G.p.x - (bs.x + 14), dy = G.p.y - bs.y;
-    if (dx * dx + dy * dy < 44 * 44 || (Math.abs(dy) < 20 && G.p.x > plateX(bs, 0) - 6 && G.p.x < bs.x)) hurtPlayer();
-  }
+  if (G.p && bs && !bs.dead && G.p.inv <= 0 && bossTouches(bs, G.p)) hurtPlayer();
   if (G.p){
     for (const c of G.caps){ if (!c.dead && d2(G.p, c) < 200){ c.dead = true; gainCapsule(); } }
   }
@@ -660,6 +792,7 @@ function update(dt){
   G.caps = G.caps.filter(o => !o.dead); G.blocks = G.blocks.filter(o => !o.dead); G.parts = G.parts.filter(o => o.l > 0);
   for (const s of G.texts){ s.l -= dt; s.y -= 22 * dt; } G.texts = G.texts.filter(s => s.l > 0); if (G.hint > 0) G.hint -= dt;
   if (G.banner > 0) G.banner -= dt;
+  if (G.bossBanner > 0) G.bossBanner -= dt;
   if (G.flashT > 0){ G.flashT -= dt; if (G.flashT <= 0) updatePanel(); }
 
   if (G.bossDead){
@@ -740,6 +873,8 @@ function drawEnemy(e){
 }
 function drawBoss(b){
   if (b.dead) return;
+  if (b.type === 'jelly') return drawJelly(b);
+  if (b.type === 'fort') return drawFort(b);
   ctx.save(); ctx.translate(b.x, b.y);
   ctx.fillStyle = C.deep; ctx.strokeStyle = b.flash > 0 ? C.ink : (BOSS_EDGE[b.mk] || C.edge); ctx.lineWidth = 3;
   ctx.beginPath(); for (let i = 0; i < 6; i++){ const a = i / 6 * 6.283; ctx[i ? 'lineTo' : 'moveTo'](14 + Math.cos(a) * 44, Math.sin(a) * 44); }
@@ -815,6 +950,13 @@ function draw(){
     ctx.fillText('STAGE ' + G.stage, W / 2, H / 2 - 8);
     ctx.font = '500 12px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-body'); ctx.fillStyle = C.ink;
     ctx.fillText(STAGES[G.stage].sub, W / 2, H / 2 + 16); ctx.globalAlpha = 1;
+  }
+  if (G.bossBanner > 0 && G.boss){
+    ctx.globalAlpha = Math.min(1, G.bossBanner / .5) * (Math.floor(G.bossBanner * 5) % 2 ? 1 : .55); ctx.textAlign = 'center';
+    ctx.fillStyle = C.coral; ctx.font = '700 14px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-mono');
+    ctx.fillText('WARNING', W / 2, 54);
+    ctx.fillStyle = C.ink; ctx.font = '700 18px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-body');
+    ctx.fillText('ボス「' + BOSS_NAME[G.boss.type] + '」', W / 2, 76); ctx.globalAlpha = 1;
   }
   if (G.hint > 0){
     ctx.globalAlpha = Math.min(1, G.hint / .5);
@@ -993,13 +1135,15 @@ const TUT_PAGES = [
       <div class="tut-item"><canvas data-fig="en-carrier"></canvas><h3>運び屋 <small>200点</small></h3><p>黄色い六角形。弾4発で倒せて、倒すと必ずカプセルを落とします。</p></div>
       <div class="tut-item"><canvas data-fig="en-turret"></canvas><h3>砲台 <small>300点</small></h3><p>天井や床に付いていて、自機をねらって撃ってきます。弾2発で倒せます。</p></div>
     </div>
-    <div class="tut-item"><canvas data-fig="en-boss" style="height:110px"></canvas><h3>ボス「コア」 <small>装甲 500点 / 撃破 10,000点</small></h3><p>前にある3枚の装甲（青緑の板）を壊すと、中心の赤いコアに弾が届くようになります。コアに24発当てると撃破。5方向に広がる弾と、自機をねらう弾を交互に撃ってきます。</p></div>
-    <p class="tut-note">STAGE 2「深海の裂け目」：洞窟がせまくなり、砲台が増えます。中心が白い編隊は弾を撃ってきます。ボスは装甲4枚・コア32発で、7方向に撃ってきます。</p>
+    <div class="tut-item"><canvas data-fig="en-boss" style="height:110px"></canvas><h3>STAGE 1 ボス「コア」 <small>装甲 500点 / 撃破 10,000点</small></h3><p>前にある3枚の装甲（青緑の板）を壊すと、中心の赤いコアに弾が届くようになります。コアに24発当てると撃破。5方向に広がる弾と、自機をねらう弾を交互に撃ってきます。</p></div>
+    <div class="tut-item"><canvas data-fig="en-jelly" style="height:120px"></canvas><h3>STAGE 2 ボス「深淵クラゲ」 <small>撃破 10,000点</small></h3><p>弱点は体の中の赤い核。ふだんはかさに守られていて、ふくらんで「OPEN」と出ている間だけ弾が届きます。開く瞬間に全方向へ弾を放つので、少し離れて待ちましょう。下にたれた触手にふれてもミス。核に24発で撃破。</p></div>
+    <p class="tut-note">STAGE 2「深海の裂け目」：洞窟がせまくなり、砲台が増えます。中心が白い編隊は弾を撃ってきます。</p>
     <div class="tut-list two">
       <div class="tut-item"><canvas data-fig="en-wall"></canvas><h3>壊せる壁 <small>STAGE 3 ・ 1個20点</small></h3><p>天井から床までふさぐブロックの壁。1個を弾2発で壊せます。黄色いブロックは宝箱で、壊すとカプセルが出ます。</p></div>
       <div class="tut-item"><canvas data-fig="en-rear"></canvas><h3>後方機 <small>STAGE 3 ・ 150点</small></h3><p>画面の左（自機の後ろ）から4機で現れ、右へ追い抜いていきます。前ばかり見ていると危険。SNIPER がいると楽に倒せます。</p></div>
     </div>
-    <p class="tut-note">STAGE 3「沈没船」：段々になった船体の地形。ボスは装甲4枚・コア36発で、戦いの最中に後方機を呼びます。</p>` },
+    <div class="tut-item"><canvas data-fig="en-fort" style="height:130px"></canvas><h3>STAGE 3 ボス「幽霊戦艦」 <small>砲台 800点 / 撃破 10,000点</small></h3><p>上下の砲台（赤い丸）が3連射でねらってきます。砲台を2つとも壊すと、船体の窓のシャッターが開き、そこが弱点になります。窓に24発で撃破。戦いの間ずっと後方機を呼ぶので、後ろにも注意。</p></div>
+    <p class="tut-note">STAGE 3「沈没船」：段々になった船体の地形。壁を撃ち抜きながら進みます。</p>` },
   { tab:'アイテム', html:`
     <div class="tut-item"><h3>AUTO と MANUAL</h3><p>アイテムの使い方は2種類。タイトル画面（または一時停止中）で切り替えられます。最初は AUTO です。</p>${modeBlock()}</div>
     <div class="tut-item"><canvas data-fig="it-auto"></canvas><h3>AUTO：取るだけで強化 <small>おすすめ</small></h3><p>カプセルを取った瞬間に、ゲージの次の強化が付きます。もう最大の強化は飛ばして進むので、取るほど強くなります。武器（TWIN／BEAM）は先に付いた方を使い続けます。全部最大のときは +500点。</p></div>
@@ -1055,6 +1199,11 @@ const FIGS = {
   'en-dash'(w, h){ const ly = h / 2 + 14; drawLeaf(34, ly, 1, false); drawEnemy({ kind:'dash', x:w - 40, y:16, vx:-210, vy:Math.max(-140, (ly - 16) / ((w - 74) / 210)), t:0 }); fx.dots(w - 52, 20, 52, ly - 2, C.coral); },
   'en-carrier'(w, h){ drawEnemy({ kind:'carrier', x:w * .35, y:h / 2, t:.3 }); fx.label(w * .35, h / 2 + 30, '弾4発', C.mute); fx.arrow(w * .35 + 26, h / 2, w * .62); fx.cap(w * .72, h / 2); },
   'en-turret'(w, h){ const fy = h - 12; fx.ground(w, fy, false); const leaf = { x:40, y:20 }; drawLeaf(leaf.x, leaf.y, 1, false); const t = { kind:'tur', x:w * .7, y:fy - 6, top:false, t:0, aimAt:leaf }; drawEnemy(t); fx.bullet(w * .48, (leaf.y + t.y) / 2 + 4); fx.dots(w * .7 - 10, fy - 12, 52, 24, C.coral); },
+  'en-jelly'(w, h){ const b = { type:'jelly', x:w - 80, y:h / 2 - 8, t:3, flash:0, dead:false }; drawJelly(b); for (let k = 0; k < 8; k++){ const a = k / 8 * 6.283; fx.bullet(b.x - 4 + Math.cos(a) * 58, b.y + 6 + Math.sin(a) * 40); } drawLeaf(30, h / 2, 1, false); },
+  'en-fort'(w, h){ const s = .58, ox = w - 66, oy = h / 2, b = { type:'fort', x:0, y:0, t:0, hp:24, cannons:[{ dy:-64, hp:12 }, { dy:64, hp:0 }], flash:0, dead:false };
+    ctx.save(); ctx.translate(ox, oy); ctx.scale(s, s); drawFort(b); ctx.restore();
+    fx.label(ox - 40 * s - 30, oy - 64 * s + 4, '砲台', C.coral); fx.label(ox - 40 * s - 30, oy + 64 * s + 4, '破壊', C.mute); fx.label(ox - 39 * s - 26, oy + 4, '窓', C.sun);
+    for (let k = 0; k < 3; k++) fx.bullet(ox - 40 * s - 50 - k * 18, oy - 64 * s + 6 + k * 6); drawLeaf(30, h / 2 + 10, 1, false); },
   'en-boss'(w, h){ const b = { x:w - 70, y:h / 2, t:0, plates:[5, 5, 5], flash:0, dead:false }; drawBoss(b); fx.label(b.x - 48, b.y - 26, '装甲×3', C.edge); fx.label(b.x - 22, b.y + 30, 'コア', C.coral); for (let k = -2; k <= 2; k++){ const a = Math.PI + k * .22; fx.bullet(b.x - 70 + Math.cos(a) * 40, b.y + Math.sin(a) * 40); } drawLeaf(30, h / 2, 1, false); },
   'it-flow'(w, h){
     const y = 26, cw = Math.max(20, Math.min(30, (w - 160) / 6 - 2)), gx = 60;
