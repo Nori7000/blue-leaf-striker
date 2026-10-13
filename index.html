@@ -641,6 +641,8 @@ function spawn(type){
     if (G.mcfg){ G.boss = makeBoss(G.mcfg.boss, false); G.boss.tint = G.mcfg.tint; G.bossBanner = 2.6; return; }
     if (G.stage === 5){ G.rush = ['core','jelly','fort','worm','king']; G.rushN = 0; nextRush(); return; }
     G.boss = makeBoss(['core','jelly','fort','worm'][G.stage - 1], false);
+    // STAGE 1 (the free part) has a gentler boss: half the toughness of the other stages' rule (2x the original)
+    if (G.stage === 1){ const b = G.boss; b.hp = Math.ceil(b.hp / 2); if (b.plates) b.plates = b.plates.map(v => Math.ceil(v / 2)); }
     G.bossBanner = 2.6;
   }
 }
