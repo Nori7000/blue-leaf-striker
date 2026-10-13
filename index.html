@@ -63,6 +63,14 @@ canvas{display:block;border-radius:6px;outline:1px solid var(--line)}
 .cell .s{display:none}
 @media (max-width:520px){.cell .l{display:none}.cell .s{display:inline}#power{width:84px}}
 .mode{display:flex;flex-direction:column;gap:6px}
+.ships{display:flex;flex-direction:column;gap:6px}
+.ship-cards{display:grid;grid-template-columns:1fr 1fr;gap:8px;max-width:520px}
+.ship-card{display:flex;flex-direction:column;gap:4px;text-align:left;padding:8px;border-radius:10px;border:1px solid var(--line);background:rgba(10,36,51,.6);color:var(--ink);cursor:pointer;font:inherit}
+.ship-card[aria-pressed="true"]{border-color:var(--sun);box-shadow:0 0 0 2px var(--sun) inset}
+.ship-card canvas{width:100%;height:54px;border-radius:6px;pointer-events:none}
+.ship-card b{font:700 14px var(--f-display);letter-spacing:.06em;display:flex;gap:8px;align-items:baseline}.ship-card b small{font:500 11px var(--f-body);color:var(--mute)}
+.ship-card span{font-size:12px;color:var(--mute);line-height:1.5}
+.ship-fx{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;margin:4px 0 0;font-size:12px}.ship-fx dt{font:700 11px var(--f-mono);color:var(--sun)}.ship-fx dd{margin:0;color:var(--ink)}
 .mode-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .mode-row .lbl{font:500 11px var(--f-mono);letter-spacing:.12em;color:var(--mute)}
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
@@ -167,13 +175,13 @@ const css = getComputedStyle(document.documentElement);
 const C = {}; ['sea','deep','reef','edge','leaf','leaf-hi','coral','sun','ink','mute'].forEach(k => C[k] = css.getPropertyValue('--' + k).trim());
 const H = 360; let W = 640, scale = 1;
 const ITEMS = {
-  SPEED:   { short:'SPD', can:p => p.spd < 4,          auto:p => p.spd < 4,           apply:p => p.spd++ },
+  SPEED:   { short:'SPD', can:p => p.spd < SHIPS[p.ship].spdMax, auto:p => p.spd < SHIPS[p.ship].spdMax, apply:p => p.spd++ },
   MISSILE: { short:'MIS', can:p => !p.missile,         auto:p => !p.missile,          apply:p => p.missile = true },
   TWIN:    { short:'TWN', can:p => p.weapon !== 't',   auto:p => p.weapon === 'n',    apply:p => p.weapon = 't' },
   BEAM:    { short:'BEM', can:p => p.weapon !== 'b',   auto:p => p.weapon === 'n',    apply:p => p.weapon = 'b' },
   DRONE:   { short:'DRN', can:p => p.opts < 2,         auto:p => p.opts < 2,          apply:p => p.opts++ },
   SNIPER:  { short:'SNP', can:p => p.snipers < 2,      auto:p => p.snipers < 2,       apply:p => p.snipers++ },
-  SHIELD:  { short:'SHD', can:p => p.shield <= 0,      auto:p => p.shield <= 0,       apply:p => p.shield = 3 }
+  SHIELD:  { short:'SHD', can:p => p.shield <= 0,      auto:p => p.shield <= 0,       apply:p => p.shield = SHIPS[p.ship].shield }
 };
 const gaugeList = stg => stg >= 2 ? ['SPEED','MISSILE','TWIN','BEAM','DRONE','SNIPER','SHIELD'] : ['SPEED','MISSILE','TWIN','BEAM','DRONE','SHIELD'];
 let GAUGE = gaugeList(1);
@@ -182,6 +190,18 @@ const STUDIO_URL = 'https://blue-leaf-studio.blog/';
 const store = { get(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }, set(k,v){ try { localStorage.setItem(k,v); } catch(e){} } };
 let hi = +store.get('bls_hi') || 0;
 itemMode = store.get('bls_mode') === 'manual' ? 'manual' : 'auto';
+/* two ships: same items, different effects. labels rename an item on the panel for that ship */
+const SHIPS = {
+  leaf: { name:'LEAF', jp:'リーフ', desc:'バランス型の軽量機。小回りが利き、強化を重ねて伸びる万能機。',
+          spdBase:120, spdStep:38, spdMax:4, shield:3, snCd:.45, labels:{},
+          fx:{ SPEED:'4段階・1段ごとに少し速く', MISSILE:'下へ落ちて床を走るミサイル', TWIN:'前と斜め上の2方向', BEAM:'敵をつらぬくビーム', DRONE:'後ろをついてくる子機（最大2）', SNIPER:'近い敵をねらう砲台（最大2）', SHIELD:'3回まで防ぐ' } },
+  lance:{ name:'LANCE', jp:'ランス', desc:'翼の先に砲をもつ重戦闘機。強化1回ごとの伸びが大きい。',
+          spdBase:112, spdStep:52, spdMax:3, shield:5, snCd:.3, labels:{ TWIN:'WIDE', BEAM:'LASER', DRONE:'WING' },
+          fx:{ SPEED:'3段階・1段ごとに大きく速く', MISSILE:'上下2発、天井と床を走る', WIDE:'翼の先から前方3方向', LASER:'長く速いレーザー（連射はゆっくり）', WING:'上下に並んで飛ぶ僚機（最大2）', SNIPER:'速い連射でねらう砲台（最大2）', SHIELD:'5回まで防ぐ' } }
+};
+let shipId = store.get('bls_ship') === 'lance' ? 'lance' : 'leaf';
+const ship = () => SHIPS[(G && G.ship) || shipId];
+const itemName = n => ship().labels[n] || n;
 
 /* ---------- layout ---------- */
 function resize(){
@@ -398,7 +418,7 @@ function buildScript(stage){
 function newGame(mode = 'main'){
   initAudio(); audioUnlocked = true; playTrack('stage');
   const mcfg = mode === 'monthly' ? monthlyNow() : null;
-  G = { state:'play', mode:mcfg ? 'monthly' : 'main', mcfg, stage:mcfg ? mcfg.base : 1, score:0, lives:mcfg ? mcfg.lives : 2, paused:false, p:null, hinted:false };
+  G = { state:'play', ship:shipId, mode:mcfg ? 'monthly' : 'main', mcfg, stage:mcfg ? mcfg.base : 1, score:0, lives:mcfg ? mcfg.lives : 2, paused:false, p:null, hinted:false };
   resetStage(); spawnPlayer(); hideOverlay();
   if (mcfg) for (const n of mcfg.startItems || []) if (ITEMS[n] && ITEMS[n].can(G.p)) ITEMS[n].apply(G.p);
   updatePanel();
@@ -414,7 +434,7 @@ function nextStage(){
   if (p){ p.x = 70; p.y = H / 2; p.hist = []; p.inv = 2; G.p = p; } else spawnPlayer();
   playTrack('stage'); hideOverlay(); updatePanel();
 }
-function spawnPlayer(){ G.p = { x:70, y:H / 2, spd:0, missile:false, weapon:'n', opts:0, snipers:0, shield:0, inv:2, hist:[] }; updatePanel(); }
+function spawnPlayer(){ G.p = { ship:G.ship, x:70, y:H / 2, spd:0, missile:false, weapon:'n', opts:0, snipers:0, shield:0, inv:2, hist:[] }; updatePanel(); }
 const clampP = () => { const p = G.p; p.x = Math.max(12, Math.min(W - 20, p.x)); p.y = Math.max(8, Math.min(H - 8, p.y)); };
 
 /* ---------- input ---------- */
@@ -459,7 +479,7 @@ const gaugeEl = $('#gauge');
 function buildGauge(){
   gaugeEl.replaceChildren(); gaugeEl.style.gridTemplateColumns = `repeat(${GAUGE.length},1fr)`;
   GAUGE.forEach(n => { const d = document.createElement('div'); d.className = 'cell';
-    const l = document.createElement('span'); l.className = 'l'; l.textContent = n;
+    const l = document.createElement('span'); l.className = 'l'; l.textContent = itemName(n);
     const s = document.createElement('span'); s.className = 's'; s.textContent = ITEMS[n].short;
     d.append(l, s); gaugeEl.appendChild(d); });
 }
@@ -472,11 +492,11 @@ function updatePanel(){
   const ready = !auto && !!(G && G.state === 'play' && p && g >= 0 && canUse(g, p));
   $('#power').disabled = !ready; $('#power').classList.toggle('ready', ready);
   $('#power').firstElementChild.textContent = auto ? 'AUTO' : 'POWER';
-  $('#powerItem').textContent = auto ? '自動で強化' : (G && g >= 0 ? GAUGE[g] : '');
+  $('#powerItem').textContent = auto ? '自動で強化' : (G && g >= 0 ? itemName(GAUGE[g]) : '');
 }
 function applyItem(i){
   const p = G.p, name = GAUGE[i]; ITEMS[name].apply(p);
-  floatText(p.x, p.y - 18, name + (name === 'SPEED' ? ' ' + p.spd : '') + ' UP!', C.leaf);
+  floatText(p.x, p.y - 18, itemName(name) + (name === 'SPEED' ? ' ' + p.spd : '') + ' UP!', C.leaf);
   sfx.power();
 }
 function usePower(){
@@ -504,6 +524,13 @@ function setMode(m){
   overlay.querySelectorAll('[data-act="mode"]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === itemMode)));
   overlay.querySelectorAll('.mode-desc').forEach(d => d.textContent = modeDesc());
   updatePanel();
+}
+const shipBlock = () => `<div class="ships"><div class="mode-row"><span class="lbl">機体</span></div><div class="ship-cards" role="group" aria-label="機体を選ぶ">
+  ${Object.entries(SHIPS).map(([id, S]) => `<button type="button" class="ship-card" data-act="ship" data-ship="${id}" aria-pressed="${id === shipId}"><canvas data-fig="ship-${id}"></canvas><b>${S.name}<small>${S.jp}</small></b><span>${S.desc}</span></button>`).join('')}
+  </div></div>`;
+function setShip(id){
+  shipId = SHIPS[id] ? id : 'leaf'; store.set('bls_ship', shipId);
+  overlay.querySelectorAll('[data-act="ship"]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.ship === shipId)));
 }
 const modeDesc = () => itemMode === 'auto'
   ? 'AUTO：カプセルを取ると、すぐに次の強化が付きます。'
@@ -596,6 +623,7 @@ function killEnemy(e){
 /* ---------- player ---------- */
 function optPos(){
   const p = G.p, h = p.hist, out = [];
+  if (p.ship === 'lance') return [{ x:p.x - 8, y:p.y - 30 }, { x:p.x - 8, y:p.y + 30 }].slice(0, p.opts); // wingmen in a fixed formation
   for (let i = 0; i < p.opts; i++){ const idx = h.length - 1 - (i + 1) * 14; out.push(idx >= 0 ? h[idx] : { x:p.x, y:p.y }); }
   return out;
 }
@@ -603,19 +631,24 @@ function fire(dt){
   const p = G.p; G.fireCd -= dt; G.misCd -= dt;
   const srcs = [{ x:p.x, y:p.y }, ...optPos()];
   if (G.fireCd <= 0){
-    G.fireCd = p.weapon === 'b' ? .2 : .13;
+    const lance = p.ship === 'lance';
+    G.fireCd = p.weapon === 'b' ? (lance ? .26 : .2) : .13;
     for (const s of srcs){
-      if (p.weapon === 'b') G.shots.push({ k:'b', x:s.x + 10, y:s.y, vx:640, vy:0, len:50, hit:new Set() });
+      if (p.weapon === 'b') G.shots.push(lance ? { k:'b', x:s.x + 14, y:s.y, vx:780, vy:0, len:92, hit:new Set() } : { k:'b', x:s.x + 10, y:s.y, vx:640, vy:0, len:50, hit:new Set() });
       else {
         G.shots.push({ k:'n', x:s.x + 10, y:s.y, vx:440, vy:0 });
-        if (p.weapon === 't') G.shots.push({ k:'n', x:s.x + 8, y:s.y - 2, vx:320, vy:-320 });
+        if (p.weapon === 't'){
+          if (lance && s === srcs[0]) for (const d of [-1, 1]) G.shots.push({ k:'n', x:s.x + 4, y:s.y + d * 11, vx:436, vy:d * 62 }); // from the wing tips, fanning out
+          else if (lance) G.shots.push({ k:'n', x:s.x + 8, y:s.y, vx:430, vy:0 });
+          else G.shots.push({ k:'n', x:s.x + 8, y:s.y - 2, vx:320, vy:-320 });
+        }
       }
     }
   }
   if (p.snipers > 0){
     G.snCd -= dt;
     if (G.snCd <= 0){
-      G.snCd = .45;
+      G.snCd = SHIPS[p.ship].snCd;
       for (const s of sniperPos()){
         const tg = sniperTarget(s); if (!tg) continue;
         const a = Math.atan2(tg.y - s.y, tg.x - s.x); s.a = a;
@@ -623,7 +656,10 @@ function fire(dt){
       }
     }
   }
-  if (p.missile && G.misCd <= 0){ G.misCd = .7; for (const s of srcs) G.shots.push({ k:'m', x:s.x, y:s.y + 4, vx:70, vy:170, ground:false }); }
+  if (p.missile && G.misCd <= 0){
+    if (p.ship === 'lance'){ G.misCd = .85; for (const s of srcs){ G.shots.push({ k:'m', x:s.x, y:s.y + 4, vx:70, vy:170, ground:false }); G.shots.push({ k:'m', up:true, x:s.x, y:s.y - 4, vx:70, vy:-170, ground:false }); } }
+    else { G.misCd = .7; for (const s of srcs) G.shots.push({ k:'m', x:s.x, y:s.y + 4, vx:70, vy:170, ground:false }); }
+  }
 }
 function sniperPos(){ const p = G.p; return [{ x:p.x - 2, y:p.y - 20 }, { x:p.x - 2, y:p.y + 20 }].slice(0, p.snipers); }
 function sniperTarget(s){
@@ -644,7 +680,7 @@ function hurtPlayer(){
 }
 function updatePlayer(dt){
   const p = G.p; p.inv = Math.max(0, p.inv - dt);
-  const sp = 120 + p.spd * 38; let mx = 0, my = 0;
+  const S = SHIPS[p.ship], sp = S.spdBase + p.spd * S.spdStep; let mx = 0, my = 0;
   if (keys.arrowleft || keys.a) mx--; if (keys.arrowright || keys.d) mx++;
   if (keys.arrowup || keys.w) my--;   if (keys.arrowdown || keys.s) my++;
   if (mx || my){ const l = Math.hypot(mx, my); p.x += mx / l * sp * dt; p.y += my / l * sp * dt; }
@@ -1038,7 +1074,8 @@ function update(dt){
   for (const s of G.shots){
     s.x += s.vx * dt; s.y += s.vy * dt;
     const wx = s.x + G.scroll;
-    if (s.k === 'm'){ const fy = floorY(wx); if (!s.ground && s.y >= fy - 4){ s.ground = true; s.vx = 200; s.vy = 0; } if (s.ground) s.y = fy - 4; }
+    if (s.k === 'm' && s.up){ const cy = ceilY(wx); if (!s.ground && s.y <= cy + 4){ s.ground = true; s.vx = 200; s.vy = 0; } if (s.ground) s.y = cy + 4; }
+    else if (s.k === 'm'){ const fy = floorY(wx); if (!s.ground && s.y >= fy - 4){ s.ground = true; s.vx = 200; s.vy = 0; } if (s.ground) s.y = fy - 4; }
     else if (s.k === 'n' && (s.y < ceilY(wx) || s.y > floorY(wx))) s.dead = true;
     if (s.x - (s.len || 0) > W + 10 || s.y < -10 || s.y > H + 10) s.dead = true;
   }
@@ -1449,6 +1486,35 @@ function drawTerrain(scroll){
     }
   }
 }
+/* LANCE: white heavy fighter seen from the side. Long nose, canopy, crimson and gold stripes, forward-swept wings opened
+   up and down with a cannon on each tip, twin engines glowing at the back. (An original design.) */
+function drawLance(x, y, s, blink){
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  const a = blink ? .35 : 1, fl = .7 + Math.random() * .3;
+  // engine glow
+  ctx.globalAlpha = a * fl; ctx.fillStyle = '#ffb347';
+  for (const ey of [-3.2, 3.2]){ ctx.beginPath(); ctx.ellipse(-17, ey, 4, 2, 0, 0, 6.283); ctx.fill(); }
+  ctx.globalAlpha = a;
+  // wings (back pair darker, then the near pair)
+  const wing = (dir, col) => { ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(-3, dir * 2); ctx.lineTo(-12, dir * 2); ctx.lineTo(-6, dir * 13); ctx.lineTo(1, dir * 13); ctx.lineTo(1, dir * 10); ctx.closePath(); ctx.fill(); };
+  wing(-1, '#c9ced6'); wing(1, '#aeb4be');
+  ctx.fillStyle = '#b8243a'; ctx.beginPath(); ctx.moveTo(-9, -4); ctx.lineTo(-6, -4); ctx.lineTo(-2, -11); ctx.lineTo(-5, -11); ctx.closePath(); ctx.moveTo(-9, 4); ctx.lineTo(-6, 4); ctx.lineTo(-2, 11); ctx.lineTo(-5, 11); ctx.closePath(); ctx.fill();
+  // wing-tip cannons
+  ctx.strokeStyle = '#e9edf2'; ctx.lineWidth = 1.6;
+  for (const d of [-1, 1]){ ctx.beginPath(); ctx.moveTo(-6, d * 13); ctx.lineTo(11, d * 13); ctx.stroke(); ctx.fillStyle = '#e0b030'; ctx.fillRect(9, d * 13 - 1, 3, 2); ctx.fillStyle = '#8a929e'; ctx.fillRect(-2, d * 13 - 1.5, 3, 3); }
+  // engines
+  ctx.fillStyle = '#b8bec8'; for (const ey of [-3.2, 3.2]){ ctx.beginPath(); ctx.ellipse(-11, ey, 6, 2.6, 0, 0, 6.283); ctx.fill(); }
+  // fuselage
+  const g = ctx.createLinearGradient(0, -5, 0, 5); g.addColorStop(0, '#ffffff'); g.addColorStop(.55, '#e3e7ec'); g.addColorStop(1, '#a9b0ba');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(19, .5); ctx.lineTo(4, -3.6); ctx.lineTo(-13, -4.2); ctx.lineTo(-13, 4.2); ctx.lineTo(4, 3.8); ctx.closePath(); ctx.fill();
+  // stripes and canopy
+  ctx.fillStyle = '#b8243a'; ctx.beginPath(); ctx.moveTo(-12, -.9); ctx.lineTo(9, -.2); ctx.lineTo(8, 1.4); ctx.lineTo(-12, 1.6); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#e0b030'; ctx.beginPath(); ctx.moveTo(13, -1.2); ctx.lineTo(19, .5); ctx.lineTo(13, 1.6); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#2f5f8a'; ctx.beginPath(); ctx.moveTo(-2, -3.9); ctx.lineTo(8, -3); ctx.lineTo(2, -6.4); ctx.lineTo(-3, -6.2); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#cfe3f5'; ctx.fillRect(0, -5.6, 2.4, 1.2);
+  ctx.restore();
+}
+const drawShip = (id, x, y, s, blink) => id === 'lance' ? drawLance(x, y, s, blink) : drawLeaf(x, y, s, blink);
 function drawLeaf(x, y, s, blink){
   ctx.save(); ctx.translate(x, y);
   ctx.globalAlpha = blink ? .35 : 1;
@@ -1524,7 +1590,7 @@ function draw(){
   const scroll = G ? G.scroll : bgScroll;
   if (!G) TA = 1;
   drawBg(scroll); drawTerrain(scroll);
-  if (!G){ drawLeaf(W * .3, H / 2 + Math.sin(bgScroll * .05) * 14, 1.6, false); return; }
+  if (!G){ drawShip(shipId, W * .3, H / 2 + Math.sin(bgScroll * .05) * 14, 1.6, false); return; }
   for (const c of G.caps){
     const a = .7 + .3 * Math.sin(c.t * 9);
     ctx.fillStyle = C.sun; ctx.globalAlpha = a; ctx.beginPath();
@@ -1545,15 +1611,20 @@ function draw(){
   }
   if (G.boss) drawBoss(G.boss);
   for (const s of G.shots){
-    if (s.k === 'b'){ ctx.strokeStyle = C.leaf; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(s.x - s.len, s.y); ctx.lineTo(s.x, s.y); ctx.stroke(); ctx.strokeStyle = C['leaf-hi']; ctx.lineWidth = 1; ctx.stroke(); }
+    const lanceShot = G.ship === 'lance';
+    if (s.k === 'b' && lanceShot){ ctx.strokeStyle = '#ff5a3a'; ctx.lineWidth = 3.5; ctx.beginPath(); ctx.moveTo(s.x - s.len, s.y); ctx.lineTo(s.x, s.y); ctx.stroke(); ctx.strokeStyle = '#fff2d8'; ctx.lineWidth = 1.2; ctx.stroke(); }
+    else if (s.k === 'b'){ ctx.strokeStyle = C.leaf; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(s.x - s.len, s.y); ctx.lineTo(s.x, s.y); ctx.stroke(); ctx.strokeStyle = C['leaf-hi']; ctx.lineWidth = 1; ctx.stroke(); }
     else if (s.k === 'm'){ ctx.fillStyle = C.sun; ctx.beginPath(); ctx.moveTo(s.x + 5, s.y); ctx.lineTo(s.x - 4, s.y - 3); ctx.lineTo(s.x - 4, s.y + 3); ctx.fill(); }
-    else { const a = Math.atan2(s.vy, s.vx); ctx.strokeStyle = C['leaf-hi']; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(s.x - Math.cos(a) * 9, s.y - Math.sin(a) * 9); ctx.stroke(); }
+    else { const a = Math.atan2(s.vy, s.vx); ctx.strokeStyle = lanceShot ? '#ffd27a' : C['leaf-hi']; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(s.x - Math.cos(a) * 9, s.y - Math.sin(a) * 9); ctx.stroke(); }
   }
   for (const b of G.eb){ ctx.fillStyle = C.coral; ctx.beginPath(); ctx.arc(b.x, b.y, 3.5, 0, 6.283); ctx.fill(); ctx.fillStyle = C.ink; ctx.beginPath(); ctx.arc(b.x, b.y, 1.4, 0, 6.283); ctx.fill(); }
   const p = G.p;
   if (p){
-    optPos().forEach(o => { ctx.fillStyle = C['leaf-hi']; ctx.beginPath(); ctx.arc(o.x, o.y, 4, 0, 6.283); ctx.fill(); ctx.strokeStyle = C.leaf; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(o.x, o.y, 7, 0, 6.283); ctx.stroke(); });
-    drawLeaf(p.x, p.y, 1, p.inv > 0 && Math.floor(p.inv * 12) % 2 === 0);
+    if (p.ship === 'lance') optPos().forEach(o => { // wingmen: small white pods with an orange nose
+      ctx.fillStyle = '#e3e7ec'; ctx.beginPath(); ctx.moveTo(o.x + 9, o.y); ctx.lineTo(o.x - 6, o.y - 3.5); ctx.lineTo(o.x - 6, o.y + 3.5); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#f0a030'; ctx.fillRect(o.x + 3, o.y - 1, 4, 2); ctx.fillStyle = '#ffb347'; ctx.globalAlpha = .6 + Math.random() * .4; ctx.fillRect(o.x - 9, o.y - 1.5, 3, 3); ctx.globalAlpha = 1; });
+    else optPos().forEach(o => { ctx.fillStyle = C['leaf-hi']; ctx.beginPath(); ctx.arc(o.x, o.y, 4, 0, 6.283); ctx.fill(); ctx.strokeStyle = C.leaf; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(o.x, o.y, 7, 0, 6.283); ctx.stroke(); });
+    drawShip(p.ship, p.x, p.y, 1, p.inv > 0 && Math.floor(p.inv * 12) % 2 === 0);
     for (const s of sniperPos()){
       const tg = sniperTarget(s), a = tg ? Math.atan2(tg.y - s.y, tg.x - s.x) : 0;
       ctx.save(); ctx.translate(s.x, s.y); ctx.fillStyle = C.sun; ctx.beginPath(); ctx.moveTo(0, -5); ctx.lineTo(5, 0); ctx.lineTo(0, 5); ctx.lineTo(-5, 0); ctx.closePath(); ctx.fill();
@@ -1725,6 +1796,7 @@ overlay.addEventListener('click', e => {
   if (a.dataset.act === 'resume') togglePause();
   if (a.dataset.act === 'next') nextStage();
   if (a.dataset.act === 'mode') setMode(a.dataset.mode);
+  if (a.dataset.act === 'ship') setShip(a.dataset.ship);
   if (a.dataset.act === 'period' && typeof setPeriod === 'function') setPeriod(a.dataset.p);
   if (a.dataset.act === 'tut') showTutorial(0, G && G.paused ? 'pause' : 'title');
   if (a.dataset.act === 'tut-page') showTutorial(+a.dataset.page, tutFrom);
@@ -1754,6 +1826,7 @@ function showTitle(){
     <h1 class="logo">BLUE LEAF<br><span>STRIKER</span></h1>
     <div class="row"><button class="btn" type="button" data-act="start">本編スタート</button><button class="btn ghost" type="button" data-act="tut">あそびかた</button></div>
     ${installBlock()}
+    ${shipBlock()}
     ${monthlyBlock()}
     ${modeBlock()}
     <p class="lead">リーフ型の機体で海底の洞窟を進む、横スクロールシューティングの試作版です。</p>
@@ -1765,6 +1838,7 @@ function showTitle(){
     </dl>
     ${boardBlock}
     ${studioBlock}`);
+  requestAnimationFrame(() => overlay.querySelectorAll('canvas[data-fig^="ship-"]').forEach(c => drawFig(c, c.dataset.fig)));
 }
 function endScores(){
   const isHi = G.score > hi; if (isHi){ hi = G.score; store.set('bls_hi', String(hi)); }
@@ -1862,7 +1936,11 @@ const TUT_PAGES = [
       <div class="tut-item"><canvas data-fig="it-sniper"></canvas><h3>SNIPER <small>STAGE 2 から</small></h3><p>自機の上下に付く発射口。近くの敵を自動でねらって撃ちます。2つまで。</p></div>
       <div class="tut-item"><canvas data-fig="it-shield"></canvas><h3>SHIELD</h3><p>前方のバリア。敵の弾や体当たりを3回まで防ぎます（壁は防げません）。</p></div>
     </div>
-    <p class="tut-note">ゲージで薄く表示されている強化は、もう最大なので取れません。強化はステージをまたいで引き継がれ、ミスするとすべてなくなります。</p>` }
+    <p class="tut-note">ゲージで薄く表示されている強化は、もう最大なので取れません。強化はステージをまたいで引き継がれ、ミスするとすべてなくなります。</p>` },
+  { tab:'機体', html:`
+    <p class="tut-note">タイトル画面で2つの機体から選べます。アイテムは同じでも、取ったときの効果が機体ごとに違います。</p>
+    <div class="tut-list two">${Object.entries(SHIPS).map(([id, S]) => `<div class="tut-item"><canvas data-fig="ship-${id}"></canvas><h3>${S.name} <small>${S.jp}</small></h3><p>${S.desc}</p>
+      <dl class="ship-fx">${Object.entries(S.fx).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl></div>`).join('')}</div>` },
 ];
 function showTutorial(page, from){
   tutFrom = from; page = Math.max(0, Math.min(TUT_PAGES.length - 1, page));
@@ -1883,8 +1961,12 @@ function drawFig(el, kind){
   el.width = Math.round(w * dpr); el.height = Math.round(h * dpr);
   const c = el.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0);
   const old = ctx; ctx = c;
-  try { ctx.fillStyle = C.sea; ctx.fillRect(0, 0, w, h); (FIGS[kind] || (() => {}))(w, h); } finally { ctx = old; }
+  try { ctx.fillStyle = C.sea; ctx.fillRect(0, 0, w, h); (FIGS[kind] || FIGS_EXTRA[kind] || (() => {}))(w, h); } finally { ctx = old; }
 }
+const FIGS_EXTRA = {
+  'ship-leaf'(w, h){ const y = h / 2; drawLeaf(w * .3, y, 1.5, false); for (let i = 1; i <= 3; i++){ fx.shot(w * .3 + 24 + i * 22, y); } },
+  'ship-lance'(w, h){ const y = h / 2; drawLance(w * .3, y, 1.5, false); ctx.strokeStyle = '#ffd27a'; ctx.lineWidth = 2; for (let i = 1; i <= 3; i++){ ctx.beginPath(); ctx.moveTo(w * .3 + 24 + i * 22, y); ctx.lineTo(w * .3 + 15 + i * 22, y); ctx.stroke(); } }
+};
 const fx = {
   bullet(x, y){ ctx.fillStyle = C.coral; ctx.beginPath(); ctx.arc(x, y, 3.5, 0, 6.283); ctx.fill(); ctx.fillStyle = C.ink; ctx.beginPath(); ctx.arc(x, y, 1.4, 0, 6.283); ctx.fill(); },
   shot(x, y, a = 0){ ctx.strokeStyle = C['leaf-hi']; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - Math.cos(a) * 9, y - Math.sin(a) * 9); ctx.stroke(); },
