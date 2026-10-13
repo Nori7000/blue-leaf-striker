@@ -323,7 +323,7 @@ function tunnelAt(wx, segs){
 const tunnelCfg = () => G && G.mcfg && G.mcfg.tunnel;
 const stepQ = v => Math.round(v / 12) * 12;
 const tri = v => Math.abs((((v % 1) + 1) % 1) * 2 - 1); // 0..1 sawtooth-like triangle wave for jagged rock
-const ceilY  = wx => tunnelCfg() ? tunnelAt(wx, G.mcfg.tunnel).top
+const ceilBase  = wx => tunnelCfg() ? tunnelAt(wx, G.mcfg.tunnel).top
   : stg() === 5
   ? TA * (16 + 30 * Math.abs(Math.sin(wx * .012)) ** 3)
   : stg() === 4
@@ -333,7 +333,7 @@ const ceilY  = wx => tunnelCfg() ? tunnelAt(wx, G.mcfg.tunnel).top
   : stg() === 2
   ? TA * (18 + 26 * (1 + Math.sin(wx * .014 + .7)) * .5 + 30 * (1 + Math.sin(wx * .0052)) * .5)
   : TA * (14 + 18 * (1 + Math.sin(wx * .011)) * .5 + 22 * (1 + Math.sin(wx * .0047 + 1.3)) * .5);
-const floorY = wx => tunnelCfg() ? tunnelAt(wx, G.mcfg.tunnel).bot
+const floorBase = wx => tunnelCfg() ? tunnelAt(wx, G.mcfg.tunnel).bot
   : stg() === 5
   ? H - TA * (16 + 30 * Math.abs(Math.sin(wx * .012)) ** 3)
   : stg() === 4
@@ -343,6 +343,32 @@ const floorY = wx => tunnelCfg() ? tunnelAt(wx, G.mcfg.tunnel).bot
   : stg() === 2
   ? H - TA * (20 + 26 * (1 + Math.sin(wx * .012 + 2.4)) * .5 + 32 * (1 + Math.sin(wx * .0041 + 1.1)) * .5)
   : H - TA * (16 + 20 * (1 + Math.sin(wx * .009 + 2)) * .5 + 26 * (1 + Math.sin(wx * .0031 + .4)) * .5);
+/* rock features on top of the base wave, part of the real wall (they hit): hanging spikes, big boulders and flat shelves.
+   The wall is cut into 150px segments; each segment gets one feature (or none) from a hash, and every feature is 0 at the
+   segment ends, so neighbours always join. Per stage: which features appear and how tall. */
+const FEAT_SEG = 150;
+const FEATS = { 1:{ kinds:'sbl', amp:1 }, 2:{ kinds:'sb', amp:.75 }, 3:{ kinds:'l', amp:.8 }, 4:{ kinds:'s', amp:.6 }, 5:{ kinds:'sbl', amp:.85 } };
+const fhash = n => { const s = Math.sin(n * 91.345 + 47.853) * 24634.6345; return s - Math.floor(s); };
+function featureAt(wx, side){
+  if (tunnelCfg()) return 0;
+  const cfg = FEATS[stg()] || FEATS[1], i = Math.floor(wx / FEAT_SEG), u = wx / FEAT_SEG - i, k = i * 13 + side * 7 + stg() * 3;
+  const pick = fhash(k); if (pick < .3) return 0;
+  const kind = cfg.kinds[Math.floor(fhash(k + 1) * cfg.kinds.length)], A = cfg.amp;
+  if (kind === 's'){ // a cluster of 2-3 sharp spikes
+    let y = 0; const n = 2 + (fhash(k + 2) > .5 ? 1 : 0);
+    for (let j = 0; j < n; j++){
+      const p = .22 + .56 * (j + .5) / n + (fhash(k + 3 + j) - .5) * .12, w = .09 + fhash(k + 6 + j) * .07, h = (16 + fhash(k + 9 + j) * 24) * A;
+      y = Math.max(y, h * Math.max(0, 1 - Math.abs(u - p) / w) ** 1.15);
+    }
+    return y;
+  }
+  if (kind === 'b') return (14 + fhash(k + 2) * 16) * A * Math.sin(Math.PI * u) ** 2; // a rounded boulder
+  // a flat shelf with steep sides
+  const r = .1, e = u < r ? u / r : u > 1 - r ? (1 - u) / r : 1, sm = e * e * (3 - 2 * e);
+  return (12 + fhash(k + 2) * 12) * A * sm;
+}
+const ceilY  = wx => ceilBase(wx) + TA * featureAt(wx, 0);
+const floorY = wx => floorBase(wx) - TA * featureAt(wx, 1);
 
 /* ---------- game state ---------- */
 let G = null;
@@ -1249,27 +1275,69 @@ function drawBg(scroll){
 
 function drawTerrain(scroll){
   if (TA <= .01) return;
-  const t = theme(), pat = rockPattern(t), now = performance.now() / 1000, step = 6;
-  if (pat.setTransform) pat.setTransform(new DOMMatrix().translateSelf(-(scroll % 96), 0));
+  const t = theme(), pat = rockPattern(t), now = performance.now() / 1000, step = 4;
+  const LX = -.45, LY = -.89; // light comes from the upper left
   for (const top of [true, false]){
-    const f = top ? ceilY : floorY, edgeY = top ? 0 : H, out = top ? 1 : -1; // out: direction from wall into the passage
-    const path = new Path2D(); path.moveTo(-2, edgeY);
-    for (let x = -2; x <= W + step; x += step) path.lineTo(x, f(x + scroll));
-    path.lineTo(W + step, edgeY); path.closePath();
+    const f = top ? ceilY : floorY, edgeY = top ? 0 : H, out = top ? 1 : -1; // out: from the wall toward the passage
+    // far rock layer: darker, slower, sits behind the real wall (no rim, so it reads as background)
+    if (!tunnelCfg()){
+      const bs = scroll * .55, back = new Path2D(); back.moveTo(-2, edgeY);
+      for (let x = -2; x <= W + 8; x += 8){ const wx = x + bs + 4000; back.lineTo(x, f(wx) + out * TA * (10 + 8 * Math.sin(wx * .021))); }
+      back.lineTo(W + 8, edgeY); back.closePath();
+      ctx.fillStyle = t.rock[1]; ctx.globalAlpha = .3; ctx.fill(back);
+      ctx.fillStyle = t.space[1]; ctx.globalAlpha = .25; ctx.fill(back); ctx.globalAlpha = 1;
+    }
+    // sample the real edge once
+    const pts = [];
+    for (let x = -4; x <= W + step; x += step) pts.push([x, f(x + scroll)]);
+    const path = new Path2D(); path.moveTo(-4, edgeY); for (const [x, y] of pts) path.lineTo(x, y); path.lineTo(W + step, edgeY); path.closePath();
+    if (pat.setTransform) pat.setTransform(new DOMMatrix().translateSelf(-(scroll % 96), 0));
     ctx.fillStyle = pat; ctx.fill(path);
     ctx.save(); ctx.clip(path);
     // depth: darker toward the screen edge
     const g = ctx.createLinearGradient(0, edgeY, 0, edgeY + out * H * .3);
-    g.addColorStop(0, 'rgba(0,0,0,.6)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+    g.addColorStop(0, 'rgba(0,0,0,.62)'); g.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = g; ctx.fillRect(0, top ? 0 : H * .7, W, H * .3);
+    // facets: each slope of the edge is lit or shaded by how it faces the light, in a band 18px into the rock.
+    // Neighbouring slopes with the same light level are merged into one shape, so there are no seams.
+    const segN = [], segL = [];
+    for (let i = 0; i < pts.length - 1; i++){
+      const dx = pts[i + 1][0] - pts[i][0], dy = pts[i + 1][1] - pts[i][1], l = Math.hypot(dx, dy) || 1;
+      segN.push([-dy / l * out, dx / l * out]); segL.push(Math.round((segN[i][0] * LX + segN[i][1] * LY) * 6) / 6);
+    }
+    const vN = pts.map((_, i) => { const a = segN[Math.max(0, i - 1)], b = segN[Math.min(segN.length - 1, i)], nx = a[0] + b[0], ny = a[1] + b[1], l = Math.hypot(nx, ny) || 1; return [nx / l, ny / l]; });
+    for (let i = 0; i < segL.length;){
+      let j = i; while (j + 1 < segL.length && segL[j + 1] === segL[i]) j++;
+      const lam = segL[i], d = 18;
+      if (Math.abs(lam) > .05){
+        ctx.beginPath(); ctx.moveTo(pts[i][0], pts[i][1]);
+        for (let k = i + 1; k <= j + 1; k++) ctx.lineTo(pts[k][0], pts[k][1]);
+        for (let k = j + 1; k >= i; k--) ctx.lineTo(pts[k][0] - vN[k][0] * d, pts[k][1] - vN[k][1] * d);
+        ctx.closePath();
+        if (lam > 0){ ctx.fillStyle = t.rock[2]; ctx.globalAlpha = Math.min(.5, lam * .55); }
+        else { ctx.fillStyle = '#000'; ctx.globalAlpha = Math.min(.45, -lam * .5); }
+        ctx.fill();
+      }
+      i = j + 1;
+    }
+    ctx.globalAlpha = 1;
+    // cracks: split the rock into blocks
+    ctx.strokeStyle = t.rock[1]; ctx.lineCap = 'round';
+    for (let wx = Math.floor(scroll / 26) * 26; wx < scroll + W + 26; wx += 26){
+      const h = hash(wx * (top ? 5.1 : 8.3)); if (h < .45) continue;
+      const x = wx - scroll, y = f(wx), len = 14 + h * 26;
+      ctx.globalAlpha = .7; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(x, y);
+      ctx.lineTo(x + (hash(wx + 1) - .5) * 10, y - out * len * .5); ctx.lineTo(x + (hash(wx + 2) - .5) * 16, y - out * len); ctx.stroke();
+      ctx.strokeStyle = t.rock[2]; ctx.globalAlpha = .3; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x + 1.5, y); ctx.lineTo(x + 1.5 + (hash(wx + 1) - .5) * 10, y - out * len * .5); ctx.stroke();
+      ctx.strokeStyle = t.rock[1];
+    }
     // stage detail inside the wall
-    ctx.lineCap = 'round';
     for (let wx = Math.floor(scroll / 18) * 18; wx < scroll + W + 18; wx += 18){
       const x = wx - scroll, y = f(wx), h = hash(wx * (top ? 1 : 3.7));
       if (t.deco === 'crystal' && h > .45){
         const len = 10 + h * 16, w = 4 + h * 4, bx = x + (hash(wx + 9) - .5) * 6, by = y - out * (len + 4);
-        ctx.fillStyle = t.rim; ctx.globalAlpha = .55; ctx.beginPath(); ctx.moveTo(bx - w, by); ctx.lineTo(bx, y - out * 3); ctx.lineTo(bx + w, by); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = t.rim2; ctx.globalAlpha = .45; ctx.beginPath(); ctx.moveTo(bx - w * .2, by); ctx.lineTo(bx, y - out * 3); ctx.lineTo(bx + w * .6, by); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = t.rim; ctx.globalAlpha = .6; ctx.beginPath(); ctx.moveTo(bx - w, by); ctx.lineTo(bx, y - out * 3); ctx.lineTo(bx + w, by); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = t.rim2; ctx.globalAlpha = .5; ctx.beginPath(); ctx.moveTo(bx - w * .2, by); ctx.lineTo(bx, y - out * 3); ctx.lineTo(bx + w * .6, by); ctx.closePath(); ctx.fill();
       } else if (t.deco === 'plate'){
         ctx.globalAlpha = .45; ctx.strokeStyle = t.rock[1]; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, y - out * 12); ctx.lineTo(x, y - out * 40); ctx.stroke();
         ctx.globalAlpha = .35; ctx.beginPath(); ctx.moveTo(x, y - out * 18); ctx.lineTo(x + 18, y - out * 18); ctx.stroke();
@@ -1282,21 +1350,23 @@ function drawTerrain(scroll){
         if (h > .8){ ctx.moveTo(px - 8, py); ctx.lineTo(px - 4, py - out * 8); }
         ctx.strokeStyle = t.rim; ctx.globalAlpha = .25 * pulse; ctx.lineWidth = 5; ctx.stroke();
         ctx.strokeStyle = t.rim2; ctx.globalAlpha = .85 * pulse; ctx.lineWidth = 1.2; ctx.stroke();
-      } else if (t.deco === 'moss' && h > .55){ // moss creeping down into the rock from the rim
-        ctx.fillStyle = t.rim; ctx.globalAlpha = .12; ctx.beginPath(); ctx.ellipse(x, y - out * 3, 5 + h * 6, 2 + h * 3, 0, 0, 6.283); ctx.fill();
       }
     }
     ctx.globalAlpha = 1; ctx.restore();
-    // lit rim: a wide soft band, then a bright contour
-    const edge = new Path2D();
-    for (let x = -2; x <= W + step; x += step){ const y = f(x + scroll); x === -2 ? edge.moveTo(x, y) : edge.lineTo(x, y); }
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = t.rim; ctx.globalAlpha = .35; ctx.lineWidth = 7; ctx.stroke(edge);
-    ctx.globalAlpha = 1; ctx.lineWidth = 2; ctx.stroke(edge);
-    ctx.strokeStyle = t.rim2; ctx.globalAlpha = .7; ctx.lineWidth = 1; ctx.stroke(edge); ctx.globalAlpha = 1;
-    // moss: small grass tufts on the rim (stage 1), never more than a few px past the wall line
+    // rim: dark outline outside, then a lit edge only where the rock faces the light
+    const edge = new Path2D(); pts.forEach(([x, y], i) => i ? edge.lineTo(x, y) : edge.moveTo(x, y));
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.strokeStyle = '#000'; ctx.globalAlpha = .45; ctx.lineWidth = 3; ctx.stroke(edge);
+    for (let i = 0; i < pts.length - 1; i++){
+      const [x0, y0] = pts[i], [x1, y1] = pts[i + 1], dx = x1 - x0, dy = y1 - y0, l = Math.hypot(dx, dy) || 1;
+      const lam = (-dy / l * out) * LX + (dx / l * out) * LY;
+      ctx.strokeStyle = lam > .15 ? t.rim2 : t.rim; ctx.globalAlpha = lam > .15 ? .95 : .55; ctx.lineWidth = lam > .15 ? 2 : 1.4;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    // moss: grass tufts on the rim and short vines from the ceiling (stage 1), a few px at most
     if (t.deco === 'moss'){
-      ctx.strokeStyle = t.rim; ctx.lineWidth = 1.4; ctx.lineCap = 'round';
+      ctx.strokeStyle = t.rim; ctx.lineWidth = 1.4;
       for (let wx = Math.floor(scroll / 7) * 7; wx < scroll + W + 7; wx += 7){
         const h = hash(wx * (top ? 1.3 : 2.9)); if (h < .35) continue;
         const x = wx - scroll, y = f(wx), sway = Math.sin(now * 1.6 + wx * .05) * 1.2, len = 3 + h * 4;
@@ -1304,7 +1374,7 @@ function drawTerrain(scroll){
         ctx.moveTo(x, y); ctx.quadraticCurveTo(x - 1 + sway, y + out * len * .6, x - 2 + sway * 1.5, y + out * len);
         ctx.moveTo(x + 2, y); ctx.quadraticCurveTo(x + 3 + sway, y + out * len * .5, x + 4 + sway * 1.5, y + out * len * .8);
         ctx.stroke();
-        if (top && h > .93){ // a short hanging vine
+        if (top && h > .93){
           ctx.strokeStyle = t.rim2; ctx.globalAlpha = .55; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, y);
           ctx.quadraticCurveTo(x + sway * 2, y + 6, x + sway * 3, y + 10); ctx.stroke(); ctx.strokeStyle = t.rim; ctx.lineWidth = 1.4;
         }
@@ -1313,7 +1383,6 @@ function drawTerrain(scroll){
     }
   }
 }
-
 function drawLeaf(x, y, s, blink){
   ctx.save(); ctx.translate(x, y);
   ctx.globalAlpha = blink ? .35 : 1;
