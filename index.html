@@ -192,12 +192,12 @@ let hi = +store.get('bls_hi') || 0;
 itemMode = store.get('bls_mode') === 'manual' ? 'manual' : 'auto';
 /* two ships: same items, different effects. labels rename an item on the panel for that ship */
 const SHIPS = {
-  leaf: { name:'LEAF', jp:'リーフ', desc:'バランス型の軽量機。小回りが利き、強化を重ねて伸びる万能機。',
-          spdBase:120, spdStep:38, spdMax:4, shield:3, snCd:.45, labels:{},
-          fx:{ SPEED:'4段階・1段ごとに少し速く', MISSILE:'下へ落ちて床を走るミサイル', TWIN:'前と斜め上の2方向', BEAM:'敵をつらぬくビーム', DRONE:'後ろをついてくる子機（最大2）', SNIPER:'近い敵をねらう砲台（最大2）', SHIELD:'3回まで防ぐ' } },
-  lance:{ name:'LANCE', jp:'ランス', desc:'翼の先に砲をもつ重戦闘機。強化1回ごとの伸びが大きい。',
-          spdBase:112, spdStep:52, spdMax:3, shield:5, snCd:.3, labels:{ TWIN:'WIDE', BEAM:'LASER', DRONE:'WING' },
-          fx:{ SPEED:'3段階・1段ごとに大きく速く', MISSILE:'上下2発、天井と床を走る', WIDE:'翼の先から前方3方向', LASER:'長く速いレーザー（連射はゆっくり）', WING:'上下に並んで飛ぶ僚機（最大2）', SNIPER:'速い連射でねらう砲台（最大2）', SHIELD:'5回まで防ぐ' } }
+  leaf: { name:'LEAF', jp:'リーフ', desc:'連射とつらぬく攻撃が得意。ザコの群れに強く、守りも固い。',
+          spdBase:120, spdStep:38, spdMax:4, shield:4, labels:{},
+          fx:{ SPEED:'4段階・細かく調整できる', MISSILE:'下へ1発・速い間隔で連射、床を走る', TWIN:'前と斜め上の2方向・速い連射', BEAM:'並んだ敵をまとめてつらぬく', DRONE:'後ろをついてくる子機（最大2）', SNIPER:'近い敵をねらう速い弾（最大2）', SHIELD:'4回まで防ぐ' } },
+  lance:{ name:'LANCE', jp:'ランス', desc:'広い範囲と一撃の重さが得意。ボスや硬い敵に強いが、連射は遅め。',
+          spdBase:112, spdStep:52, spdMax:3, shield:3, labels:{ TWIN:'WIDE', BEAM:'LASER', DRONE:'WING' },
+          fx:{ SPEED:'3段階・1段の伸びが大きい', MISSILE:'上下2発・間隔は長め、天井も床も走る', WIDE:'翼の先から前方3方向・連射は遅め', LASER:'長く重いレーザー（2倍の威力・つらぬかない）', WING:'上下に並んで飛ぶ僚機（最大2）', SNIPER:'重い弾をゆっくり撃つ（2倍の威力）', SHIELD:'3回まで防ぐ・防ぐたびに周りの敵弾を消す' } }
 };
 let shipId = store.get('bls_ship') === 'lance' ? 'lance' : 'leaf';
 const ship = () => SHIPS[(G && G.ship) || shipId];
@@ -621,6 +621,7 @@ function killEnemy(e){
 }
 
 /* ---------- player ---------- */
+const dmgOf = s => s.dmg || (s.k === 'm' ? 2 : 1); // missiles and LANCE's heavy shots hit for 2
 function optPos(){
   const p = G.p, h = p.hist, out = [];
   if (p.ship === 'lance') return [{ x:p.x - 8, y:p.y - 30 }, { x:p.x - 8, y:p.y + 30 }].slice(0, p.opts); // wingmen in a fixed formation
@@ -632,9 +633,9 @@ function fire(dt){
   const srcs = [{ x:p.x, y:p.y }, ...optPos()];
   if (G.fireCd <= 0){
     const lance = p.ship === 'lance';
-    G.fireCd = p.weapon === 'b' ? (lance ? .26 : .2) : .13;
+    G.fireCd = p.weapon === 'b' ? (lance ? .3 : .2) : (lance && p.weapon === 't' ? .19 : .13);
     for (const s of srcs){
-      if (p.weapon === 'b') G.shots.push(lance ? { k:'b', x:s.x + 14, y:s.y, vx:780, vy:0, len:92, hit:new Set() } : { k:'b', x:s.x + 10, y:s.y, vx:640, vy:0, len:50, hit:new Set() });
+      if (p.weapon === 'b') G.shots.push(lance ? { k:'b', heavy:true, dmg:2, x:s.x + 14, y:s.y, vx:780, vy:0, len:92, hit:new Set() } : { k:'b', x:s.x + 10, y:s.y, vx:640, vy:0, len:50, hit:new Set() });
       else {
         G.shots.push({ k:'n', x:s.x + 10, y:s.y, vx:440, vy:0 });
         if (p.weapon === 't'){
@@ -648,17 +649,18 @@ function fire(dt){
   if (p.snipers > 0){
     G.snCd -= dt;
     if (G.snCd <= 0){
-      G.snCd = SHIPS[p.ship].snCd;
+      G.snCd = p.ship === 'lance' ? .9 : .45;
       for (const s of sniperPos()){
         const tg = sniperTarget(s); if (!tg) continue;
         const a = Math.atan2(tg.y - s.y, tg.x - s.x); s.a = a;
-        G.shots.push({ k:'n', x:s.x + Math.cos(a) * 8, y:s.y + Math.sin(a) * 8, vx:Math.cos(a) * 430, vy:Math.sin(a) * 430 });
+        if (p.ship === 'lance') G.shots.push({ k:'n', big:true, dmg:2, x:s.x + Math.cos(a) * 8, y:s.y + Math.sin(a) * 8, vx:Math.cos(a) * 360, vy:Math.sin(a) * 360 });
+        else G.shots.push({ k:'n', x:s.x + Math.cos(a) * 8, y:s.y + Math.sin(a) * 8, vx:Math.cos(a) * 470, vy:Math.sin(a) * 470 });
       }
     }
   }
   if (p.missile && G.misCd <= 0){
-    if (p.ship === 'lance'){ G.misCd = .85; for (const s of srcs){ G.shots.push({ k:'m', x:s.x, y:s.y + 4, vx:70, vy:170, ground:false }); G.shots.push({ k:'m', up:true, x:s.x, y:s.y - 4, vx:70, vy:-170, ground:false }); } }
-    else { G.misCd = .7; for (const s of srcs) G.shots.push({ k:'m', x:s.x, y:s.y + 4, vx:70, vy:170, ground:false }); }
+    if (p.ship === 'lance'){ G.misCd = 1; for (const s of srcs){ G.shots.push({ k:'m', x:s.x, y:s.y + 4, vx:70, vy:170, ground:false }); G.shots.push({ k:'m', up:true, x:s.x, y:s.y - 4, vx:70, vy:-170, ground:false }); } }
+    else { G.misCd = .5; for (const s of srcs) G.shots.push({ k:'m', x:s.x, y:s.y + 4, vx:70, vy:170, ground:false }); }
   }
 }
 function sniperPos(){ const p = G.p; return [{ x:p.x - 2, y:p.y - 20 }, { x:p.x - 2, y:p.y + 20 }].slice(0, p.snipers); }
@@ -675,7 +677,11 @@ function killPlayer(){
 }
 function hurtPlayer(){
   const p = G.p; if (!p || p.inv > 0) return;
-  if (p.shield > 0){ p.shield--; p.inv = .6; sfx.hit(); updatePanel(); return; }
+  if (p.shield > 0){
+    p.shield--; p.inv = .6; sfx.hit(); updatePanel();
+    if (p.ship === 'lance'){ for (const b of G.eb) if (d2(b, p) < 90 * 90){ b.dead = true; burst(b.x, b.y, '#ffd27a', 3, .4); } G.shake = .2; G.ring = { x:p.x, y:p.y, at:performance.now() }; }
+    return;
+  }
   killPlayer();
 }
 function updatePlayer(dt){
@@ -741,7 +747,7 @@ function shotVsBoss(s){
   const coreHit = s.k === 'b' ? (Math.abs(dy) < 11 && s.x >= cx - 9 && s.x - s.len <= cx + 9) : dx * dx + dy * dy < 144;
   if (coreHit){
     s.dead = true;
-    if (b.plates.every(v => v <= 0)){ b.hp -= s.k === 'm' ? 2 : 1; b.flash = .08; sfx.hit(); if (b.hp <= 0) killBoss(); }
+    if (b.plates.every(v => v <= 0)){ b.hp -= dmgOf(s); b.flash = .08; sfx.hit(); if (b.hp <= 0) killBoss(); }
     return;
   }
   const bx = s.x - (b.x + 14); if (bx * bx + dy * dy < 1600) s.dead = true;
@@ -760,7 +766,7 @@ function shotVsBlocks(s){
     if (k.dead || Math.abs(s.y - k.y) > 8) continue;
     const inX = s.k === 'b' ? s.x >= k.x - 7 && s.x - s.len <= k.x + 7 : Math.abs(s.x - k.x) <= 9;
     if (!inX) continue;
-    s.dead = true; hitBlock(k, s.k === 'm' ? 2 : 1); return;
+    s.dead = true; hitBlock(k, dmgOf(s)); return;
   }
 }
 
@@ -823,10 +829,10 @@ function updateWorm(b, dt){
 }
 function shotVsWorm(b, s){
   const hit = (x, y, r) => s.k === 'b' ? Math.abs(s.y - y) < r && s.x >= x - r && s.x - s.len <= x + r : d2(s, { x, y }) < r * r;
-  if (hit(b.x, b.y, 16)) return damageBoss(b, s, s.k === 'm' ? 2 : 1);
+  if (hit(b.x, b.y, 16)) return damageBoss(b, s, dmgOf(s));
   for (const g of wormSegs(b)){
     if (g.s.hp <= 0 || !hit(g.x, g.y, 13)) continue;
-    s.dead = true; g.s.hp -= s.k === 'm' ? 2 : 1; b.flash = .03; sfx.hit();
+    s.dead = true; g.s.hp -= dmgOf(s); b.flash = .03; sfx.hit();
     if (g.s.hp <= 0){ burst(g.x, g.y, '#ff8a3d', 12, .8); G.score += 200; floatText(g.x, g.y - 10, '+200', C.ink, .8, 10); }
     return;
   }
@@ -872,12 +878,12 @@ function shotVsKing(b, s){
   const hit = (x, y, r) => s.k === 'b' ? Math.abs(s.y - y) < r && s.x >= x - r && s.x - s.len <= x + r : d2(s, { x, y }) < r * r;
   for (const g of b.gems){
     if (g.hp <= 0 || !hit(b.x - 44, b.y + g.dy, 13)) continue;
-    s.dead = true; g.hp -= s.k === 'm' ? 2 : 1; b.flash = .05; sfx.hit();
+    s.dead = true; g.hp -= dmgOf(s); b.flash = .05; sfx.hit();
     if (g.hp <= 0){ burst(b.x - 44, b.y + g.dy, '#e6c36a', 26, 1.2); G.score += 1500; floatText(b.x - 44, b.y + g.dy - 14, '+1500', C.sun, 1, 12); if (kingOpen(b)) floatText(W / 2, H / 2 - 50, '口が開いた！', C.coral, 1.6, 16); }
     return;
   }
   const m = kingMouth(b);
-  if (kingOpen(b) && hit(m.x, m.y, 15)) return damageBoss(b, s, s.k === 'm' ? 2 : 1);
+  if (kingOpen(b) && hit(m.x, m.y, 15)) return damageBoss(b, s, dmgOf(s));
   if (((s.x - (b.x + 20)) / 78) ** 2 + ((s.y - b.y) / 108) ** 2 < 1) s.dead = true;
 }
 function drawKing(b){
@@ -966,7 +972,7 @@ function shotVsJelly(b, s){
   const open = jellyOpen(b), nx = b.x - 4, ny = b.y + 6;
   if (open){
     const hit = s.k === 'b' ? Math.abs(s.y - ny) < 12 && s.x >= nx - 11 && s.x - s.len <= nx + 11 : d2(s, { x:nx, y:ny }) < 13 * 13;
-    if (hit) return damageBoss(b, s, s.k === 'm' ? 2 : 1);
+    if (hit) return damageBoss(b, s, dmgOf(s));
     if (Math.abs(s.y - ny) < 13) return; // the raised bell leaves a clear path to the nucleus
   }
   const by = b.y - (open ? 16 : 0);
@@ -1017,12 +1023,12 @@ function shotVsFort(b, s){
     const cx = b.x - 40, cy = b.y + c.dy;
     const hit = s.k === 'b' ? Math.abs(s.y - cy) < 14 && s.x >= cx - 13 && s.x - s.len <= cx + 13 : d2(s, { x:cx, y:cy }) < 14 * 14;
     if (!hit) continue;
-    s.dead = true; c.hp -= s.k === 'm' ? 2 : 1; b.flash = .05; sfx.hit();
+    s.dead = true; c.hp -= dmgOf(s); b.flash = .05; sfx.hit();
     if (c.hp <= 0){ burst(cx, cy, '#d39a5b', 24, 1.2); G.score += 800; sfx.small(); }
     return;
   }
   const open = b.cannons.every(c => c.hp <= 0);
-  if (open && Math.abs(s.y - b.y) < 16 && s.x >= b.x - 48 && (s.k === 'b' ? s.x - s.len <= b.x - 30 : s.x <= b.x - 28)) return damageBoss(b, s, s.k === 'm' ? 2 : 1);
+  if (open && Math.abs(s.y - b.y) < 16 && s.x >= b.x - 48 && (s.k === 'b' ? s.x - s.len <= b.x - 30 : s.x <= b.x - 28)) return damageBoss(b, s, dmgOf(s));
   if (s.x > b.x - 32 && s.x < b.x + 92 && Math.abs(s.y - b.y) < 96) s.dead = true;
 }
 function drawFort(b){
@@ -1118,8 +1124,8 @@ function update(dt){
       if (s.k === 'b') hit = !s.hit.has(e.id) && s.x >= e.x - e.r && s.x - s.len <= e.x + e.r && Math.abs(s.y - e.y) < e.r + 2;
       else hit = d2(s, e) < (e.r + 3) ** 2;
       if (!hit) continue;
-      if (s.k === 'b') s.hit.add(e.id); else s.dead = true;
-      e.hp -= s.k === 'm' ? 2 : 1;
+      if (s.k === 'b' && !s.heavy) s.hit.add(e.id); else s.dead = true;
+      e.hp -= dmgOf(s);
       if (e.hp <= 0) killEnemy(e); else sfx.hit();
       if (s.dead) break;
     }
@@ -1610,11 +1616,13 @@ function draw(){
     ctx.font = '700 12px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-mono'); ctx.textAlign = 'left'; ctx.fillText('!', 20, warn.y + 4);
   }
   if (G.boss) drawBoss(G.boss);
+  if (G.ring){ const k = (performance.now() - G.ring.at) / 350; if (k > 1) G.ring = null; else { ctx.strokeStyle = '#ffd27a'; ctx.globalAlpha = 1 - k; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(G.ring.x, G.ring.y, 20 + k * 70, 0, 6.283); ctx.stroke(); ctx.globalAlpha = 1; } }
   for (const s of G.shots){
     const lanceShot = G.ship === 'lance';
     if (s.k === 'b' && lanceShot){ ctx.strokeStyle = '#ff5a3a'; ctx.lineWidth = 3.5; ctx.beginPath(); ctx.moveTo(s.x - s.len, s.y); ctx.lineTo(s.x, s.y); ctx.stroke(); ctx.strokeStyle = '#fff2d8'; ctx.lineWidth = 1.2; ctx.stroke(); }
     else if (s.k === 'b'){ ctx.strokeStyle = C.leaf; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(s.x - s.len, s.y); ctx.lineTo(s.x, s.y); ctx.stroke(); ctx.strokeStyle = C['leaf-hi']; ctx.lineWidth = 1; ctx.stroke(); }
     else if (s.k === 'm'){ ctx.fillStyle = C.sun; ctx.beginPath(); ctx.moveTo(s.x + 5, s.y); ctx.lineTo(s.x - 4, s.y - 3); ctx.lineTo(s.x - 4, s.y + 3); ctx.fill(); }
+    else if (s.big){ const a = Math.atan2(s.vy, s.vx); ctx.strokeStyle = '#ff7a4a'; ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(s.x - Math.cos(a) * 12, s.y - Math.sin(a) * 12); ctx.stroke(); ctx.strokeStyle = '#fff2d8'; ctx.lineWidth = 1.5; ctx.stroke(); ctx.lineCap = 'butt'; }
     else { const a = Math.atan2(s.vy, s.vx); ctx.strokeStyle = lanceShot ? '#ffd27a' : C['leaf-hi']; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(s.x - Math.cos(a) * 9, s.y - Math.sin(a) * 9); ctx.stroke(); }
   }
   for (const b of G.eb){ ctx.fillStyle = C.coral; ctx.beginPath(); ctx.arc(b.x, b.y, 3.5, 0, 6.283); ctx.fill(); ctx.fillStyle = C.ink; ctx.beginPath(); ctx.arc(b.x, b.y, 1.4, 0, 6.283); ctx.fill(); }
@@ -1630,7 +1638,8 @@ function draw(){
       ctx.save(); ctx.translate(s.x, s.y); ctx.fillStyle = C.sun; ctx.beginPath(); ctx.moveTo(0, -5); ctx.lineTo(5, 0); ctx.lineTo(0, 5); ctx.lineTo(-5, 0); ctx.closePath(); ctx.fill();
       ctx.rotate(a); ctx.strokeStyle = C.sun; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(2, 0); ctx.lineTo(10, 0); ctx.stroke(); ctx.restore();
     }
-    if (p.shield > 0){ ctx.strokeStyle = C.leaf; ctx.globalAlpha = .35 + p.shield * .2; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(p.x + 2, p.y, 18, -1.15, 1.15); ctx.stroke(); ctx.globalAlpha = 1; }
+    if (p.shield > 0 && p.ship === 'lance'){ ctx.strokeStyle = '#ffd27a'; ctx.globalAlpha = .3 + p.shield * .2; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(p.x, p.y, 22, 0, 6.283); ctx.stroke(); ctx.globalAlpha = 1; }
+    else if (p.shield > 0){ ctx.strokeStyle = C.leaf; ctx.globalAlpha = .35 + p.shield * .2; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(p.x + 2, p.y, 18, -1.15, 1.15); ctx.stroke(); ctx.globalAlpha = 1; }
   }
   for (const q of G.parts){
     ctx.globalAlpha = Math.max(0, q.l / q.m);
@@ -1934,7 +1943,7 @@ const TUT_PAGES = [
       <div class="tut-item"><canvas data-fig="it-beam"></canvas><h3>BEAM</h3><p>敵をつらぬく長いビーム。並んだ敵をまとめて倒せます。</p></div>
       <div class="tut-item"><canvas data-fig="it-drone"></canvas><h3>DRONE</h3><p>自機の後をついてくる分身。自機と同じ弾を撃ちます。2つまで。</p></div>
       <div class="tut-item"><canvas data-fig="it-sniper"></canvas><h3>SNIPER <small>STAGE 2 から</small></h3><p>自機の上下に付く発射口。近くの敵を自動でねらって撃ちます。2つまで。</p></div>
-      <div class="tut-item"><canvas data-fig="it-shield"></canvas><h3>SHIELD</h3><p>前方のバリア。敵の弾や体当たりを3回まで防ぎます（壁は防げません）。</p></div>
+      <div class="tut-item"><canvas data-fig="it-shield"></canvas><h3>SHIELD</h3><p>バリア。敵の弾や体当たりを防ぎます（LEAF は4回、LANCE は3回。壁は防げません）。</p></div>
     </div>
     <p class="tut-note">ゲージで薄く表示されている強化は、もう最大なので取れません。強化はステージをまたいで引き継がれ、ミスするとすべてなくなります。</p>` },
   { tab:'機体', html:`
@@ -2042,7 +2051,7 @@ const FIGS = {
     [[x - 2, y - 20], [x - 2, y + 20]].forEach(([sx, sy], i) => { const t = tg[i], a = Math.atan2(t.y - sy, t.x - sx); ctx.save(); ctx.translate(sx, sy); ctx.fillStyle = C.sun; ctx.beginPath(); ctx.moveTo(0, -5); ctx.lineTo(5, 0); ctx.lineTo(0, 5); ctx.lineTo(-5, 0); ctx.closePath(); ctx.fill(); ctx.rotate(a); ctx.strokeStyle = C.sun; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(2, 0); ctx.lineTo(10, 0); ctx.stroke(); ctx.restore();
       fx.dots(sx + 10, sy, t.x - 10, t.y, C['leaf-hi']); fx.shot(sx + (t.x - sx) * .5, sy + (t.y - sy) * .5, a); drawEnemy({ kind:'fan', x:t.x, y:t.y, t:i }); });
     fx.label(w * .3, h - 4, '自動でねらう', C.sun); },
-  'it-shield'(w, h){ const x = w * .38, y = h / 2; drawLeaf(x, y, 1, false); ctx.strokeStyle = C.leaf; ctx.globalAlpha = .95; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(x + 2, y, 18, -1.15, 1.15); ctx.stroke(); ctx.globalAlpha = 1; fx.bullet(x + 26, y - 6); fx.dots(x + 30, y - 6, w * .8, y - 18, C.coral); fx.label(w * .78, y + 18, '3回まで防ぐ', C.sun); }
+  'it-shield'(w, h){ const x = w * .38, y = h / 2; drawLeaf(x, y, 1, false); ctx.strokeStyle = C.leaf; ctx.globalAlpha = .95; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(x + 2, y, 18, -1.15, 1.15); ctx.stroke(); ctx.globalAlpha = 1; fx.bullet(x + 26, y - 6); fx.dots(x + 30, y - 6, w * .8, y - 18, C.coral); fx.label(w * .78, y + 18, '4回まで防ぐ（LEAF）', C.sun); }
 };
 
 /* ---------- loop ---------- */
