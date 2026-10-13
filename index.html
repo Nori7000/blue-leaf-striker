@@ -343,9 +343,6 @@ const floorY = wx => tunnelCfg() ? tunnelAt(wx, G.mcfg.tunnel).bot
   : stg() === 2
   ? H - TA * (20 + 26 * (1 + Math.sin(wx * .012 + 2.4)) * .5 + 32 * (1 + Math.sin(wx * .0041 + 1.1)) * .5)
   : H - TA * (16 + 20 * (1 + Math.sin(wx * .009 + 2)) * .5 + 26 * (1 + Math.sin(wx * .0031 + .4)) * .5);
-const STAGE_LOOK = { 1:{ reef:null, edge:null }, 2:{ reef:'#1b2546', edge:'#8ea2ff' }, 3:{ reef:'#3a2a20', edge:'#d39a5b' }, 4:{ reef:'#24120f', edge:'#ff8a3d' }, 5:{ reef:'#1d1630', edge:'#e6c36a' } };
-const BOSS_EDGE = { 2:'#8ea2ff', 3:'#d39a5b' };
-const terrCol = k => (G && G.mcfg && G.mcfg.look[k]) || (STAGE_LOOK[stg()] && STAGE_LOOK[stg()][k]) || C[k];
 
 /* ---------- game state ---------- */
 let G = null;
@@ -1104,36 +1101,219 @@ function update(dt){
 }
 
 /* ---------- drawing ---------- */
-const dots = [0, 1].map(l => Array.from({ length: l ? 40 : 70 }, () => ({ x:Math.random() * 800, y:Math.random() * H })));
+/* Each stage has its own look: deep-space gradient, a nebula band, coloured twinkling stars, the glowing Earth,
+   and textured walls (rock pattern, depth shading, a lit rim and stage-specific detail: moss, crystals, plates, lava cracks, gold veins).
+   Decoration that sticks out past the wall line stays tiny (a few px), so what you see still matches what hits you. */
+const THEME = {
+  1:{ space:['#020814','#061a35'], neb:[['#1f5c9a', .30], ['#2b8fa6', .18]], planet:{ kind:'earth', r:170, x:.74, y:1.02, par:.012 },
+      rock:['#5c4426', '#2c1f10', '#9c7a45'], rim:'#7fcf5f', rim2:'#dcf7a0', deco:'moss' },
+  2:{ space:['#0b0410', '#250818'], neb:[['#8a1f45', .30], ['#4a2390', .20]], planet:{ kind:'earth', r:44, x:.16, y:.26, par:.008 },
+      rock:['#6e1c22', '#300a10', '#c44a44'], rim:'#ff7a68', rim2:'#ffd2bd', deco:'crystal' },
+  3:{ space:['#07080d', '#1a140e'], neb:[['#6a4a2a', .22], ['#2a4a6a', .16]], planet:{ kind:'moon', r:52, x:.8, y:.26, par:.006 },
+      rock:['#4e3b2a', '#22180f', '#a07850'], rim:'#d39a5b', rim2:'#ffe0b0', deco:'plate' },
+  4:{ space:['#0a0403', '#240b05'], neb:[['#9a3a12', .28], ['#5a1a0a', .22]], planet:{ kind:'sun', r:46, x:.22, y:.24, par:.005 },
+      rock:['#2b1b16', '#110806', '#5a3a2e'], rim:'#ff8a3d', rim2:'#ffd08a', deco:'lava' },
+  5:{ space:['#05030c', '#1a0f30'], neb:[['#5a2a9a', .30], ['#9a7a2a', .14]], planet:{ kind:'ringed', r:50, x:.84, y:.28, par:.007 },
+      rock:['#2a2046', '#120c22', '#665496'], rim:'#e6c36a', rim2:'#fff0c0', deco:'vein' }
+};
+const STAGE_LOOK = Object.fromEntries(Object.entries(THEME).map(([k, t]) => [k, { reef:t.rock[0], edge:t.rim }]));
+const BOSS_EDGE = { 2:THEME[2].rim, 3:THEME[3].rim };
+const terrCol = k => (G && G.mcfg && G.mcfg.look[k]) || (STAGE_LOOK[stg()] && STAGE_LOOK[stg()][k]) || C[k];
+function theme(){
+  const t = THEME[stg()] || THEME[1], look = G && G.mcfg && G.mcfg.look;
+  return look ? { ...t, rock:[look.reef, t.rock[1], t.rock[2]], rim:look.edge, key:'m' + look.reef + look.edge } : { ...t, key:'s' + stg() };
+}
+const hash = n => { const s = Math.sin(n * 127.1 + 311.7) * 43758.5453; return s - Math.floor(s); };
+function seeded(seed){ let s = seed >>> 0 || 1; return () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296; }
+
+/* rock texture tile (seamless: every blob is also drawn wrapped) */
+const artCache = {};
+function rockPattern(t){
+  const key = 'rock' + t.key; if (artCache[key]) return artCache[key];
+  const S = 96, c = document.createElement('canvas'); c.width = c.height = S; const x = c.getContext('2d'), rnd = seeded(7 + stg());
+  x.fillStyle = t.rock[0]; x.fillRect(0, 0, S, S);
+  const blob = (px, py, rx, ry, col, a) => { x.globalAlpha = a; x.fillStyle = col; for (const dx of [-S, 0, S]) for (const dy of [-S, 0, S]){ x.beginPath(); x.ellipse(px + dx, py + dy, rx, ry, rnd() * 3, 0, 6.283); x.fill(); } };
+  for (let i = 0; i < 46; i++) blob(rnd() * S, rnd() * S, 3 + rnd() * 11, 1.5 + rnd() * 5, t.rock[1], .3);
+  for (let i = 0; i < 40; i++) blob(rnd() * S, rnd() * S, 2 + rnd() * 6, 1 + rnd() * 3, t.rock[2], .22);
+  x.globalAlpha = .25; x.strokeStyle = t.rock[2]; x.lineWidth = 1;
+  for (let i = 0; i < 6; i++){ const py = rnd() * S; x.beginPath(); for (let px = 0; px <= S; px += 8) x.lineTo(px, py + Math.sin(px / S * 6.283 * (1 + (i % 2))) * 3); x.stroke(); }
+  x.globalAlpha = .5; x.strokeStyle = t.rock[1]; x.lineWidth = 1;
+  for (let i = 0; i < 9; i++){ let px = rnd() * S, py = rnd() * S; x.beginPath(); x.moveTo(px, py); for (let k = 0; k < 4; k++){ px += (rnd() - .5) * 18; py += rnd() * 12; x.lineTo(px, py); } x.stroke(); }
+  x.globalAlpha = .55; for (let i = 0; i < 90; i++){ x.fillStyle = rnd() < .5 ? t.rock[1] : t.rock[2]; x.fillRect(rnd() * S | 0, rnd() * S | 0, 1, 1); }
+  x.globalAlpha = 1;
+  return artCache[key] = ctx.createPattern(c, 'repeat');
+}
+
+/* background planets, rendered once each: the glowing blue-white Earth, the Moon, a red sun, a ringed giant */
+function planetSprite(kind, r){
+  const key = 'pl' + kind + r; if (artCache[key]) return artCache[key];
+  const g = Math.ceil(r * (kind === 'sun' ? .9 : kind === 'ringed' ? 1.1 : .45)), S = (r + g) * 2, cx = S / 2;
+  const ball = document.createElement('canvas'); ball.width = ball.height = S;
+  const bx = ball.getContext('2d'), img = bx.createImageData(S, S), d = img.data;
+  const L = [-.62, -.48, .62], ln = Math.hypot(...L); L[0] /= ln; L[1] /= ln; L[2] /= ln;
+  const land = (a, b) => Math.sin(a * 2 + Math.sin(b * 3) * 1.3) * Math.cos(b * 2.5 + a * .7) + .5 * Math.sin(a * 5.1 + b * 3.7 + 1.3) * Math.cos(b * 4.3 - a * 2.2) + .22 * Math.sin(a * 11 + b * 9);
+  const cloud = (a, b) => Math.sin(a * 4 + b * 7 + Math.sin(a * 9) * .8) * .6 + Math.sin(a * 9.3 - b * 5.1) * .4 + Math.sin(a * 17 + b * 13) * .2;
+  const clamp = v => v < 0 ? 0 : v > 1 ? 1 : v;
+  for (let py = 0; py < S; py++) for (let px = 0; px < S; px++){
+    const nx = (px - cx + .5) / r, ny = (py - cx + .5) / r, d2 = nx * nx + ny * ny; if (d2 > 1) continue;
+    const nz = Math.sqrt(1 - d2), lon = Math.atan2(nx, nz) + .6, lat = Math.asin(-ny * .96 + nz * .04);
+    const diff = Math.max(0, nx * L[0] + ny * L[1] + nz * L[2]);
+    let R, Gc, B, shade = .04 + .96 * diff, fres = Math.pow(1 - nz, 3) * (.25 + .75 * diff) * .8, fr = [150, 205, 255];
+    if (kind === 'earth'){
+      const n = land(lon * 1.2, lat * 1.6), ice = Math.abs(lat) > 1.2 + .08 * Math.sin(lon * 5);
+      if (ice){ R = 230; Gc = 240; B = 250; }
+      else if (n > .3){ const k = clamp((n - .3) * 2.4); R = 46 + 110 * k; Gc = 98 + 40 * k; B = 52 + 18 * k; }
+      else { const k = clamp((n + .7) / 1.0); R = 2 + 14 * k; Gc = 22 + 60 * k; B = 78 + 100 * k; }
+      const c = clamp((cloud(lon * .8 + Math.sin(lat * 6) * .3, lat * 3.4) - .62) * 2.4) * .7;
+      R += (240 - R) * c; Gc += (246 - Gc) * c; B += (255 - B) * c;
+    } else if (kind === 'moon'){
+      const n = land(lon * 2.4, lat * 2.8) * .5 + .5, cr = Math.sin(lon * 23) * Math.sin(lat * 19);
+      const v = 120 + 70 * n - (cr > .82 ? 45 : 0); R = v; Gc = v * .98; B = v * .95; fres *= .4; fr = [200, 210, 230];
+    } else if (kind === 'sun'){
+      const n = land(lon * 3, lat * 3) * .5 + .5; R = 255; Gc = 120 + 90 * n; B = 40 + 50 * n; shade = .85 + .25 * nz; fres = 0;
+    } else {
+      const band = Math.sin(lat * 9 + Math.sin(lon * 2) * .6) * .5 + .5;
+      R = 110 + 90 * band; Gc = 70 + 60 * band; B = 160 + 50 * (1 - band); fr = [255, 220, 160]; fres *= .7;
+    }
+    const i = (py * S + px) * 4;
+    d[i] = Math.min(255, R * shade + fr[0] * fres); d[i + 1] = Math.min(255, Gc * shade + fr[1] * fres); d[i + 2] = Math.min(255, B * shade + fr[2] * fres);
+    d[i + 3] = 255 * clamp((1 - Math.sqrt(d2)) * r * 1.4);
+  }
+  bx.putImageData(img, 0, 0);
+  const out = document.createElement('canvas'); out.width = out.height = S; const o = out.getContext('2d');
+  const glow = { earth:['rgba(150,210,255,.8)', 'rgba(110,180,255,.35)'], moon:['rgba(220,225,240,.25)', 'rgba(200,210,230,.08)'],
+                 sun:['rgba(255,170,80,.9)', 'rgba(255,90,30,.35)'], ringed:['rgba(230,190,255,.35)', 'rgba(180,140,255,.12)'] }[kind];
+  const halo = o.createRadialGradient(cx, cx, r * .9, cx, cx, r + g);
+  halo.addColorStop(0, glow[0]); halo.addColorStop(.25, glow[1]); halo.addColorStop(1, 'rgba(0,0,0,0)');
+  o.fillStyle = halo; o.fillRect(0, 0, S, S);
+  const ring = back => { // a tilted ring: the back half behind the ball, the front half over it
+    o.save(); o.translate(cx, cx); o.rotate(-.35); o.scale(1, .28);
+    for (const [rr, w, a] of [[r * 1.55, r * .22, .55], [r * 1.9, r * .14, .35]]){
+      o.strokeStyle = `rgba(240,210,150,${a})`; o.lineWidth = w; o.beginPath(); o.arc(0, 0, rr, back ? Math.PI : 0, back ? 2 * Math.PI : Math.PI); o.stroke();
+    }
+    o.restore();
+  };
+  if (kind === 'ringed') ring(true);
+  o.drawImage(ball, 0, 0);
+  if (kind === 'ringed') ring(false);
+  if (kind === 'earth'){
+    const rim = o.createRadialGradient(cx, cx, r * .86, cx, cx, r);
+    rim.addColorStop(0, 'rgba(170,220,255,0)'); rim.addColorStop(1, 'rgba(190,230,255,.6)');
+    o.globalCompositeOperation = 'lighter'; o.fillStyle = rim; o.beginPath(); o.arc(cx, cx, r, 0, 6.283); o.fill();
+  }
+  return artCache[key] = out;
+}
+
+/* soft nebula band, wide enough to tile */
+function nebula(t){
+  const key = 'neb' + t.key; if (artCache[key]) return artCache[key];
+  const Wn = 1024, c = document.createElement('canvas'); c.width = Wn; c.height = H; const x = c.getContext('2d'), rnd = seeded(31 + stg());
+  for (let i = 0; i < 16; i++){
+    const [col, a] = t.neb[i % t.neb.length], px = rnd() * Wn, py = H * (.15 + rnd() * .7), rr = 60 + rnd() * 120;
+    for (const dx of [-Wn, 0, Wn]){
+      const gr = x.createRadialGradient(px + dx, py, 0, px + dx, py, rr);
+      gr.addColorStop(0, col); gr.addColorStop(1, 'rgba(0,0,0,0)');
+      x.globalAlpha = a * (.5 + rnd() * .5); x.fillStyle = gr; x.fillRect(px + dx - rr, py - rr, rr * 2, rr * 2);
+    }
+  }
+  return artCache[key] = c;
+}
+
+const STAR_COLS = ['#ffffff', '#cfe8ff', '#ffe8c4', '#bcd2ff'];
+const dots = [0, 1, 2].map(l => Array.from({ length:[80, 45, 14][l] }, () => ({ x:Math.random() * 800, y:Math.random() * H, c:STAR_COLS[Math.random() * 4 | 0], p:Math.random() * 6.283 })));
 let bgScroll = 0;
 function drawBg(scroll){
-  ctx.fillStyle = C.sea; ctx.fillRect(-10, -10, W + 20, H + 20);
+  const t = theme(), now = performance.now() / 1000;
+  const sky = ctx.createLinearGradient(0, 0, 0, H); sky.addColorStop(0, t.space[0]); sky.addColorStop(1, t.space[1]);
+  ctx.fillStyle = sky; ctx.fillRect(-10, -10, W + 20, H + 20);
+  const nb = nebula(t), nx = -((scroll * .05) % nb.width);
+  ctx.globalAlpha = .9; for (let x = nx; x < W; x += nb.width) ctx.drawImage(nb, x, 0); ctx.globalAlpha = 1;
   dots.forEach((layer, l) => {
-    ctx.fillStyle = l ? 'rgba(210,242,255,.55)' : 'rgba(143,179,191,.28)';
-    const k = l ? .5 : .2, s = l ? 2 : 1.4;
-    for (const d of layer){ const x = ((d.x - scroll * k) % 800 + 800) % 800; if (x < W) ctx.fillRect(x, d.y, s, s); }
+    const k = [.15, .4, .8][l], s = [1, 1.6, 2.2][l];
+    for (const d of layer){
+      const x = ((d.x - scroll * k) % 800 + 800) % 800; if (x >= W) continue;
+      ctx.globalAlpha = l === 2 ? .55 + .45 * Math.sin(now * 2.2 + d.p) : [.45, .7][l];
+      ctx.fillStyle = d.c; ctx.fillRect(x, d.y, s, s);
+      if (l === 2){ ctx.globalAlpha *= .5; ctx.fillRect(x - 3, d.y + s / 2 - .5, 6 + s, 1); ctx.fillRect(x + s / 2 - .5, d.y - 3, 1, 6 + s); }
+    }
   });
+  ctx.globalAlpha = 1;
+  const e = t.planet, sp = planetSprite(e.kind, e.r), span = W + sp.width;
+  const ex = ((W * e.x - scroll * e.par) % span + span) % span - sp.width / 2, ey = H * e.y;
+  ctx.globalAlpha = e.r > 100 ? .88 : .85; ctx.drawImage(sp, ex - sp.width / 2, ey - sp.height / 2); ctx.globalAlpha = 1;
   if (G && G.mcfg && G.mcfg.swim){
     ctx.strokeStyle = 'rgba(210,242,255,.25)'; ctx.lineWidth = 1;
     for (const d of dots[1]){ const x = ((d.x - scroll * .3) % 800 + 800) % 800, y = ((d.y - G.t * 40 * (1 + d.x % 3 * .3)) % H + H) % H; if (x < W){ ctx.beginPath(); ctx.arc(x, y, 1.5 + d.x % 2, 0, 6.283); ctx.stroke(); } }
   }
 }
+
 function drawTerrain(scroll){
   if (TA <= .01) return;
+  const t = theme(), pat = rockPattern(t), now = performance.now() / 1000, step = 6;
+  if (pat.setTransform) pat.setTransform(new DOMMatrix().translateSelf(-(scroll % 96), 0));
   for (const top of [true, false]){
-    const f = top ? ceilY : floorY, edgeY = top ? 0 : H;
-    ctx.beginPath(); ctx.moveTo(0, edgeY);
-    for (let x = 0; x <= W + 8; x += 8) ctx.lineTo(x, f(x + scroll));
-    ctx.lineTo(W + 8, edgeY); ctx.closePath(); ctx.fillStyle = terrCol('reef'); ctx.fill();
-    ctx.strokeStyle = terrCol('edge'); ctx.lineWidth = 1.5; ctx.beginPath();
-    for (let x = 0; x <= W + 8; x += 8){ const y = f(x + scroll); x ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
-    ctx.stroke();
-    ctx.globalAlpha = .3; ctx.lineWidth = 1; ctx.beginPath();
-    const off = top ? -9 : 9;
-    for (let x = 0; x <= W + 8; x += 8){ const y = f(x + scroll) + off * TA; x ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
-    ctx.stroke(); ctx.globalAlpha = 1;
+    const f = top ? ceilY : floorY, edgeY = top ? 0 : H, out = top ? 1 : -1; // out: direction from wall into the passage
+    const path = new Path2D(); path.moveTo(-2, edgeY);
+    for (let x = -2; x <= W + step; x += step) path.lineTo(x, f(x + scroll));
+    path.lineTo(W + step, edgeY); path.closePath();
+    ctx.fillStyle = pat; ctx.fill(path);
+    ctx.save(); ctx.clip(path);
+    // depth: darker toward the screen edge
+    const g = ctx.createLinearGradient(0, edgeY, 0, edgeY + out * H * .3);
+    g.addColorStop(0, 'rgba(0,0,0,.6)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, top ? 0 : H * .7, W, H * .3);
+    // stage detail inside the wall
+    ctx.lineCap = 'round';
+    for (let wx = Math.floor(scroll / 18) * 18; wx < scroll + W + 18; wx += 18){
+      const x = wx - scroll, y = f(wx), h = hash(wx * (top ? 1 : 3.7));
+      if (t.deco === 'crystal' && h > .45){
+        const len = 10 + h * 16, w = 4 + h * 4, bx = x + (hash(wx + 9) - .5) * 6, by = y - out * (len + 4);
+        ctx.fillStyle = t.rim; ctx.globalAlpha = .55; ctx.beginPath(); ctx.moveTo(bx - w, by); ctx.lineTo(bx, y - out * 3); ctx.lineTo(bx + w, by); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = t.rim2; ctx.globalAlpha = .45; ctx.beginPath(); ctx.moveTo(bx - w * .2, by); ctx.lineTo(bx, y - out * 3); ctx.lineTo(bx + w * .6, by); ctx.closePath(); ctx.fill();
+      } else if (t.deco === 'plate'){
+        ctx.globalAlpha = .45; ctx.strokeStyle = t.rock[1]; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, y - out * 12); ctx.lineTo(x, y - out * 40); ctx.stroke();
+        ctx.globalAlpha = .35; ctx.beginPath(); ctx.moveTo(x, y - out * 18); ctx.lineTo(x + 18, y - out * 18); ctx.stroke();
+        ctx.fillStyle = t.rim2; ctx.globalAlpha = .55; ctx.fillRect(x + 4, y - out * 9 - 1, 2, 2); ctx.fillRect(x + 4, y - out * 27 - 1, 2, 2); ctx.fillRect(x + 13, y - out * 27 - 1, 2, 2);
+      } else if ((t.deco === 'lava' || t.deco === 'vein') && h > .5){
+        const pulse = t.deco === 'lava' ? .55 + .45 * Math.sin(now * 2.5 + h * 9) : .7;
+        let px = x, py = y - out * (7 + h * 16);
+        ctx.beginPath(); ctx.moveTo(px, py);
+        for (let k = 0; k < 4; k++){ px += 5 + hash(wx + k) * 6; py += (hash(wx + k + 4) - .5) * 9; ctx.lineTo(px, py); }
+        if (h > .8){ ctx.moveTo(px - 8, py); ctx.lineTo(px - 4, py - out * 8); }
+        ctx.strokeStyle = t.rim; ctx.globalAlpha = .25 * pulse; ctx.lineWidth = 5; ctx.stroke();
+        ctx.strokeStyle = t.rim2; ctx.globalAlpha = .85 * pulse; ctx.lineWidth = 1.2; ctx.stroke();
+      } else if (t.deco === 'moss' && h > .55){ // moss creeping down into the rock from the rim
+        ctx.fillStyle = t.rim; ctx.globalAlpha = .12; ctx.beginPath(); ctx.ellipse(x, y - out * 3, 5 + h * 6, 2 + h * 3, 0, 0, 6.283); ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1; ctx.restore();
+    // lit rim: a wide soft band, then a bright contour
+    const edge = new Path2D();
+    for (let x = -2; x <= W + step; x += step){ const y = f(x + scroll); x === -2 ? edge.moveTo(x, y) : edge.lineTo(x, y); }
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = t.rim; ctx.globalAlpha = .35; ctx.lineWidth = 7; ctx.stroke(edge);
+    ctx.globalAlpha = 1; ctx.lineWidth = 2; ctx.stroke(edge);
+    ctx.strokeStyle = t.rim2; ctx.globalAlpha = .7; ctx.lineWidth = 1; ctx.stroke(edge); ctx.globalAlpha = 1;
+    // moss: small grass tufts on the rim (stage 1), never more than a few px past the wall line
+    if (t.deco === 'moss'){
+      ctx.strokeStyle = t.rim; ctx.lineWidth = 1.4; ctx.lineCap = 'round';
+      for (let wx = Math.floor(scroll / 7) * 7; wx < scroll + W + 7; wx += 7){
+        const h = hash(wx * (top ? 1.3 : 2.9)); if (h < .35) continue;
+        const x = wx - scroll, y = f(wx), sway = Math.sin(now * 1.6 + wx * .05) * 1.2, len = 3 + h * 4;
+        ctx.globalAlpha = .9; ctx.beginPath();
+        ctx.moveTo(x, y); ctx.quadraticCurveTo(x - 1 + sway, y + out * len * .6, x - 2 + sway * 1.5, y + out * len);
+        ctx.moveTo(x + 2, y); ctx.quadraticCurveTo(x + 3 + sway, y + out * len * .5, x + 4 + sway * 1.5, y + out * len * .8);
+        ctx.stroke();
+        if (top && h > .93){ // a short hanging vine
+          ctx.strokeStyle = t.rim2; ctx.globalAlpha = .55; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, y);
+          ctx.quadraticCurveTo(x + sway * 2, y + 6, x + sway * 3, y + 10); ctx.stroke(); ctx.strokeStyle = t.rim; ctx.lineWidth = 1.4;
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
   }
 }
+
 function drawLeaf(x, y, s, blink){
   ctx.save(); ctx.translate(x, y);
   ctx.globalAlpha = blink ? .35 : 1;
