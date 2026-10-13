@@ -2128,7 +2128,7 @@ async function sb(path, body){
   if (CFG.supabaseKey.startsWith('eyJ')) headers.Authorization = 'Bearer ' + CFG.supabaseKey;
   const r = await fetch(CFG.supabaseUrl.replace(/\/+$/, '') + '/rest/v1/' + path,
     body === undefined ? { headers } : { method:'POST', headers, body:JSON.stringify(body) });
-  if (!r.ok) throw Object.assign(new Error('HTTP ' + r.status), { status:r.status });
+  if (!r.ok){ let code = ''; try { code = (await r.json()).code || ''; } catch(e){} throw Object.assign(new Error('HTTP ' + r.status), { status:r.status, code }); }
   const txt = await r.text(); return txt ? JSON.parse(txt) : null;
 }
 // one row per registration; keep each name's best inside the period so one player does not fill the board
@@ -2155,6 +2155,8 @@ async function loadBoard(force){
     try { [m, y, s] = await all(); }
     catch(e){
       if (e.status !== 400) throw e;
+      const noColumn = e.code === '42703' || e.code === 'PGRST204'; // only a missing column means "not migrated yet"
+      if (!noColumn) throw e;
       // try again without the ship / item columns (database not migrated yet), then without the mode column
       if (tagsAsked){ tagColumns = false; try { [m, y, s] = await all(); boards.month = topByName(m); boards.year = topByName(y); boards.stage = topByName(s); rankError = false; rankReady = true; renderBoards(); return; } catch(e2){ if (e2.status !== 400) throw e2; } }
       // the mode column is not there yet: show every score as the main game and leave the monthly board empty
@@ -2213,7 +2215,10 @@ overlay.addEventListener('submit', async e => {
     let id;
     // send which ship and item mode were used; fall back to the older function until the database is migrated
     try { id = await sb('rpc/submit_score', tagColumns && modeColumn ? { ...base, ...tags } : base); }
-    catch(err){ if (!(tagColumns && modeColumn) || (err.status !== 404 && err.status !== 400)) throw err; tagColumns = false; id = await sb('rpc/submit_score', base); }
+    catch(err){ // only when the 5-argument function does not exist yet; a rejected score must not switch the tags off
+      if (!(tagColumns && modeColumn) || !(err.status === 404 || err.code === 'PGRST202')) throw err;
+      tagColumns = false; id = await sb('rpc/submit_score', base);
+    }
     if (id != null){ mine.add(id); store.set('bls_mine', JSON.stringify([...mine].slice(-50))); }
     myBest = score; store.set(bestKey(), String(score));
     const p = document.createElement('p'); p.className = 'board-note'; p.textContent = `「${name}」で ${score.toLocaleString()} 点を登録しました。`;
