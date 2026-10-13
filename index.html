@@ -651,7 +651,7 @@ function spawn(type){
     G.boss = makeBoss(['core','jelly','fort','worm'][G.stage - 1], false);
     // STAGE 1 (the free part) has a gentler boss: half the toughness of the other stages' rule (2x the original)
     if (G.stage === 1){ const b = G.boss; b.hp = Math.ceil(b.hp / 2); if (b.plates) b.plates = b.plates.map(v => Math.ceil(v / 2)); }
-    if (G.stage === 2) Object.assign(G.boss, { gate:true, sc:2.2, x:W + 260, hp:340, hp0:340, form:1, cd:1.4 }); // THE GATEKEEPER
+    if (G.stage === 2) Object.assign(G.boss, { gate:true, sc:2.8, x:W + 300, hp:340, hp0:340, form:1, cd:1.4 }); // THE GATEKEEPER
     G.bossBanner = 3.2; sfx.warn();
   }
 }
@@ -1018,7 +1018,7 @@ function bossTouches(b, p){
   if (b.type === 'king') return ((p.x - (b.x + 20)) / 80) ** 2 + ((p.y - b.y) / 110) ** 2 < 1;
   if (b.type === 'worm') return d2(p, b) < 20 * 20 || wormSegs(b).some(g => g.s.hp > 0 && d2(p, g) < 16 * 16);
   if (b.type === 'jelly'){
-    const open = jellyOpen(b), S = JS(b), by = b.y - (open ? 16 : 0) * S;
+    const open = jellyOpen(b), S = JS(b), by = b.y - (open ? (b.gate ? 2.5 : 16) : 0) * S;
     if (b.gate && b.form === 3) return d2(p, jellyCore(b)) < (16 * S) ** 2;
     if (((p.x - b.x) / (46 * S)) ** 2 + ((p.y - by) / ((open ? 30 : 36) * S)) ** 2 < 1) return true;
     for (const q of tentaclePts(b)) if (d2(p, q) < 64 * S) return true;
@@ -1111,12 +1111,54 @@ function shotVsJelly(b, s){
     if (Math.abs(s.y - ny) < cr + 1) return; // the raised bell leaves a clear path to the nucleus
   }
   if (b.gate && b.form === 3) return;
-  const by = b.y - (open ? 16 : 0) * S;
+  const by = b.y - (open ? (b.gate ? 2.5 : 16) : 0) * S;
   if (((s.x - b.x) / (44 * S)) ** 2 + ((s.y - by) / ((open ? 28 : 34) * S)) ** 2 < 1){ s.dead = true; if (!open) b.flash = .03; }
 }
 /* THE GATEKEEPER, drawn big: a violet glow fills the cave, seven ribbon tentacles with glowing nodes hang below,
    frilled oral arms, a translucent bell with a bright rim and light pulsing along its veins, and the red heart inside. */
+/* the gatekeeper artwork (img/gatekeeper.webp, cut out from the concept art). The eye sits at EYE in the 600 px sprite.
+   If the picture is not there (the claude.ai version), the hand-drawn jellyfish below is used instead. */
+const GATE_IMG = new Image(); GATE_IMG.src = 'img/gatekeeper.webp';
+const GATE_EYE = [329.5, 203];
+function drawGateSprite(b){
+  const S = JS(b), open = jellyOpen(b), inhale = jellyInhale(b), t = b.t, c = jellyCore(b), im = GATE_IMG;
+  const k = 44 * S * 2 / 523;                         // sprite px -> screen px (the bell is 523 px wide in the sprite)
+  const lift = open ? 2.5 * S : 0, breathe = inhale ? .97 + .015 * Math.sin(t * 30) : 1 + .018 * Math.sin(t * 2.4);
+  const amb = ctx.createRadialGradient(c.x, c.y, 20, c.x, c.y, 320);
+  amb.addColorStop(0, `rgba(170,90,255,${.24 + .06 * Math.sin(t * 2)})`); amb.addColorStop(1, 'rgba(60,20,120,0)');
+  ctx.fillStyle = amb; ctx.fillRect(0, 0, W, H);
+  if (b.zap){
+    const z = b.zap, live = z.t > .9, x1 = zapEnd(b);
+    if (!live){ ctx.strokeStyle = '#7fe0ff'; ctx.globalAlpha = .35 + .35 * Math.abs(Math.sin(z.t * 25)); ctx.setLineDash([6, 6]); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(0, z.y); ctx.lineTo(x1, z.y); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1; }
+    else { ctx.strokeStyle = 'rgba(127,224,255,.3)'; ctx.lineWidth = 16; ctx.beginPath(); ctx.moveTo(0, z.y); ctx.lineTo(x1, z.y); ctx.stroke();
+      for (const [w, col] of [[3, '#bff4ff'], [1.2, '#ffffff']]){ ctx.strokeStyle = col; ctx.lineWidth = w; ctx.beginPath(); for (let x = 0; x <= x1; x += 10) ctx.lineTo(x, z.y + (Math.random() - .5) * 10); ctx.stroke(); } }
+  }
+  const ox = c.x - GATE_EYE[0] * k, oy = c.y - lift - GATE_EYE[1] * k * breathe;
+  const cut = 300;                                    // above this sprite row: the bell (drawn whole); below: tentacles, swaying in strips
+  const draw = () => {
+    ctx.drawImage(im, 0, 0, im.naturalWidth, cut, ox, oy, im.naturalWidth * k, cut * k * breathe);
+    for (let y = cut; y < im.naturalHeight; y += 6){
+      const depth = (y - cut) / (im.naturalHeight - cut), sway = Math.sin(t * 2.3 + y * .025) * 9 * depth + Math.sin(t * 1.3 + y * .011) * 4 * depth;
+      ctx.drawImage(im, 0, y, im.naturalWidth, 7, ox + sway, oy + cut * k * breathe + (y - cut) * k, im.naturalWidth * k, 7 * k); // strips overlap by 1 px: no seams
+    }
+  };
+  draw();
+  if (b.flash > 0){ ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = .45; draw(); ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1; }
+  // the eye: shielded by a hexagonal membrane while the bell is shut, blazing when it opens
+  if (!open){
+    ctx.save(); ctx.translate(c.x, c.y); ctx.globalAlpha = .55; ctx.fillStyle = 'rgba(120,80,230,.55)'; ctx.strokeStyle = '#c9b2ff'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); for (let i = 0; i < 6; i++){ const a = i / 6 * 6.283 + t * .3; ctx[i ? 'lineTo' : 'moveTo'](Math.cos(a) * 30, Math.sin(a) * 30); } ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.globalAlpha = .3; for (let i = 0; i < 6; i++){ const a = i / 6 * 6.283 + t * .3; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(a) * 30, Math.sin(a) * 30); ctx.stroke(); }
+    ctx.restore(); ctx.globalAlpha = 1;
+  } else {
+    const g = ctx.createRadialGradient(c.x, c.y, 2, c.x, c.y, 46); g.addColorStop(0, 'rgba(255,240,240,.95)'); g.addColorStop(.3, 'rgba(255,70,120,.6)'); g.addColorStop(1, 'rgba(255,40,90,0)');
+    ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(c.x, c.y, 46, 0, 6.283); ctx.fill(); ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = C.sun; ctx.font = '700 11px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-mono'); ctx.textAlign = 'center'; ctx.fillText('OPEN', c.x, c.y + 42);
+  }
+  if (inhale){ ctx.strokeStyle = 'rgba(230,200,255,.75)'; ctx.lineWidth = 1.5; for (let i = 0; i < 14; i++){ const a = i / 14 * 6.283 + t * 3, r = 130 - (t * 170 % 80); ctx.beginPath(); ctx.moveTo(c.x + Math.cos(a) * r, c.y + Math.sin(a) * r * .8); ctx.lineTo(c.x + Math.cos(a) * (r - 20), c.y + Math.sin(a) * (r - 20) * .8); ctx.stroke(); } }
+}
 function drawGate(b){
+  if (b.form !== 3 && GATE_IMG.complete && GATE_IMG.naturalWidth) return drawGateSprite(b);
   const S = JS(b), open = jellyOpen(b), inhale = jellyInhale(b), lift = (open ? 16 : 0) * S, t = b.t, c = jellyCore(b);
   const pulse = inhale ? .9 + .03 * Math.sin(t * 30) : 1 + .04 * Math.sin(t * 4);
   // the whole cave glows with it
