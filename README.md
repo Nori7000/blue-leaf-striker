@@ -46,4 +46,6 @@
 
 - `scores` テーブルは誰でも読めるが、直接の書き込みはできない（RLS）。
 - 登録は `submit_score(p_name, p_score)` 関数だけを通す。名前は12文字まで、スコアは 1〜500,000、全体で1分あたり30件まで。
+- 各行に、使った機体（LEAF / LANCE）とアイテムの使い方（AUTO / MANUAL）を表示する。途中で MANUAL に切り替えたプレイは MANUAL として記録。
+  これを記録するには `supabase/2026-10-ship-items.sql` を SQL Editor で1回実行する（実行前でもランキングは動き、機体・アイテムの表示が出ないだけ）。
 - `config.js` に入れてよいのは publishable（anon）キーだけ。secret / service_role キーは絶対に入れない。
