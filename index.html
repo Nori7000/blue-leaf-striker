@@ -9,8 +9,12 @@
 <meta property="og:description" content="スマホのブラウザで遊べる横スクロールシューティング。">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="icon.svg">
-<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}[hidden]{display:none!important}</style>
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="LEAF STRIKER">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);padding-left:env(safe-area-inset-left,0px);padding-right:env(safe-area-inset-right,0px)}body{margin:0}[hidden]{display:none!important}</style>
 <script src="config.js"></script>
 </head>
 <body>
@@ -93,6 +97,7 @@ canvas{display:block;border-radius:6px;outline:1px solid var(--line)}
 .score small{font-size:10px;letter-spacing:.12em;color:var(--mute)}
 .score b{font-size:22px;font-weight:500}
 .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.install-tip{margin:0;padding:8px 12px;border:1px solid var(--line, rgba(140,200,220,.3));border-radius:10px;font-size:12.5px;line-height:1.6;max-width:520px}
 .btn{border:0;border-radius:8px;padding:13px 22px;background:var(--leaf);color:var(--sea);font:700 14px var(--f-body);cursor:pointer}
 .btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
 .studio{font-size:13px;color:var(--mute);border-top:1px solid var(--line);padding-top:12px;line-height:1.6}
@@ -1418,11 +1423,22 @@ function monthlyBlock(){
     <p class="rule">${m.rule}</p><p>ボス「${m.bossName}」。本編とは別の、このステージだけのランキングで競います。</p>
     <div class="row"><button class="btn" type="button" data-act="monthly">今月のステージに挑戦</button></div></div>`;
 }
+/* in a phone browser (not yet on the home screen): show how to play full screen without the browser's tabs and address bar */
+function installBlock(){
+  let framed = false; try { framed = window.top !== window; } catch(e){ framed = true; }
+  const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches;
+  if (framed || standalone) return '';
+  const ua = navigator.userAgent, ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  if (!ios && !/Android/.test(ua)) return '';
+  const how = ios ? 'Safari の <b>共有ボタン</b>（□に↑）→ <b>「ホーム画面に追加」</b>' : 'Chrome の <b>︙</b> → <b>「ホーム画面に追加」</b>';
+  return `<p class="install-tip">📱 ホーム画面に追加すると、ブラウザのタブやアドレスバーが消えて<b>全画面</b>で遊べます。<br>${how}</p>`;
+}
 function showTitle(){
   showOverlay(`
     <div class="eyebrow">Prototype · ${LAST_STAGE} Stages</div>
     <h1 class="logo">BLUE LEAF<br><span>STRIKER</span></h1>
     <div class="row"><button class="btn" type="button" data-act="start">本編スタート</button><button class="btn ghost" type="button" data-act="tut">あそびかた</button></div>
+    ${installBlock()}
     ${monthlyBlock()}
     ${modeBlock()}
     <p class="lead">リーフ型の機体で海底の洞窟を進む、横スクロールシューティングの試作版です。</p>
