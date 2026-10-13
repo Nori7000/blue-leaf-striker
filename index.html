@@ -206,8 +206,8 @@ const SHIPS = {
           spdBase:120, spdStep:38, spdMax:4, shield:4, labels:{},
           fx:{ SPEED:'4段階・細かく調整できる', MISSILE:'下へ1発・速い間隔で連射、床を走る', TWIN:'前と斜め上の2方向・速い連射', BEAM:'並んだ敵をまとめてつらぬく', DRONE:'後ろをついてくる子機（最大2）', SNIPER:'近い敵をねらう速い弾（最大2）', SHIELD:'4回まで防ぐ' } },
   lance:{ name:'LANCE', jp:'ランス', desc:'広い範囲と一撃の重さが得意。ボスや硬い敵に強いが、連射は遅め。',
-          spdBase:112, spdStep:52, spdMax:3, shield:3, labels:{ TWIN:'WIDE', BEAM:'LASER', DRONE:'WING' },
-          fx:{ SPEED:'3段階・1段の伸びが大きい', MISSILE:'上下2発・間隔は長め、天井も床も走る', WIDE:'翼の先から前方3方向・連射は遅め', LASER:'長く重いレーザー（2倍の威力・つらぬかない）', WING:'上下に並んで飛ぶ僚機（最大2）', SNIPER:'重い弾をゆっくり撃つ（2倍の威力）', SHIELD:'3回まで防ぐ・防ぐたびに周りの敵弾を消す' } }
+          spdBase:108, spdStep:50, spdMax:3, shield:2, labels:{ TWIN:'WIDE', BEAM:'LASER', DRONE:'WING' },
+          fx:{ SPEED:'3段階・1段の伸びが大きい', MISSILE:'上下2発（1発は軽め）、天井も床も走る', WIDE:'翼の先から前方3方向・連射は遅め', LASER:'長く重いレーザー（2倍の威力・つらぬかない・連射は遅い）', WING:'上下に並んで飛ぶ僚機（最大2）', SNIPER:'重い弾をゆっくり撃つ（2倍の威力）', SHIELD:'2回まで防ぐ・防ぐたびに周りの敵弾を消す' } }
 };
 let shipId = store.get('bls_ship') === 'lance' ? 'lance' : 'leaf';
 const ship = () => SHIPS[(G && G.ship) || shipId];
@@ -410,7 +410,20 @@ function featureAt(wx, side){
   return stg() === 3 ? Math.round(v / 12) * 12 : v;
 }
 const ceilY  = wx => ceilBase(wx) + TA * featureAt(wx, 0);
-const floorY = wx => floorBase(wx) - TA * featureAt(wx, 1);
+/* laser gate cycle (2.6 s): off, then a 0.6 s warning glow, then 1 s of beam */
+const gateState = g => { if (G.t < g.t0) return 'off'; const ph = (G.t - g.t0) % 2.6; return ph > 1.6 ? 'on' : ph > 1 ? 'warn' : 'off'; };
+const gateOn = g => gateState(g) === 'on';
+const SURGE_H = 58;
+function surgeAmt(){
+  const s = G && G.surge; if (!s) return 0;
+  const t = G.t - s.t0, e = x => x * x * (3 - 2 * x);
+  if (t < 1.5) return 0;                       // warning
+  if (t < 2.3) return SURGE_H * e((t - 1.5) / .8);
+  if (t < 4.8) return SURGE_H;
+  if (t < 5.8) return SURGE_H * (1 - e((t - 4.8) / 1));
+  return 0;
+}
+const floorY = wx => floorBase(wx) - TA * featureAt(wx, 1) - surgeAmt();
 
 /* ---------- game state ---------- */
 let G = null;
@@ -420,20 +433,31 @@ function buildMonthlyScript(cfg){
   ev.push({ t:cfg.endT + 4, type:'boss' });
   return ev;
 }
+/* difficulty by stage: enemy bullet speed, enemy fire rate, and from STAGE 4 a parting shot from every enemy you destroy */
+const BULLET_K = [1.05, 1.2, 1.32, 1.45, 1.55], FIRE_K = [1, 1.3, 1.5, 1.7, 1.9];
+const stIdx = () => Math.max(0, Math.min(4, stg() - 1));
+const bulletK = () => BULLET_K[stIdx()], fireK = () => FIRE_K[stIdx()];
 function buildScript(stage){
   const order = stage === 5
-    ? ['fan','dash','carrier','rear','fanLow','dash','fan','carrier']
+    ? ['fan','well','dash','carrier','rear','fanLow','well','dash','fan','carrier','well','rear']
     : stage === 4
-    ? ['fan','vents','dash','carrier','vents','rear','fanLow','turrets','vents','fan','carrier','vents','dash','rear']
+    ? ['fan','vents','dash','surge','carrier','vents','rear','fanLow','surge','turrets','vents','fan','carrier','surge','vents','dash','rear']
     : stage === 3
-    ? ['fan','wall','rear','carrier','turrets','fanLow','wall','rear','dash','carrier','wall','fan','rear','turrets']
+    ? ['fan','gate','wall','rear','carrier','gate','turrets','fanLow','wall','gate','rear','dash','carrier','wall','fan','gate','turrets']
     : stage === 2
-    ? ['fan','turrets','dash','carrier','fanLow','turrets','fan','dash','carrier','turrets','fanLow','dash']
+    ? ['fan','shards','turrets','dash','carrier','shards','fanLow','turrets','fan','shards','dash','carrier','turrets','fanLow']
     : ['fan','dash','carrier','fanLow','turrets','fan','dash','carrier','turrets','fanLow'];
+  const heavy = { turrets:5, wall:5, vents:5, shards:4.5, gate:5.5, surge:6.5, well:7 };
+  const gap = stage >= 2 ? Math.max(2.3, 3.4 - .28 * (stage - 1)) : 3.6;
   const ev = []; let t = 2.5, k = 0;
-  const endT = stage === 5 ? 26 : 80;
-  while (t < endT){ const type = order[k % order.length]; ev.push({ t, type }); t += type === 'turrets' || type === 'wall' || type === 'vents' ? 5 : stage >= 2 ? 3.4 : 4; k++; }
-  ev.push({ t: stage === 5 ? 30 : 84, type: 'boss' });
+  const endT = stage === 5 ? 44 : 80;
+  while (t < endT){
+    const type = order[k % order.length]; ev.push({ t, type });
+    // from STAGE 3 every third wave brings company
+    if (stage >= 3 && k % 3 === 2 && !heavy[type]) ev.push({ t:t + .8, type:k % 2 ? 'dash' : 'rear' });
+    t += heavy[type] || gap; k++;
+  }
+  ev.push({ t: endT + 4, type: 'boss' });
   return ev;
 }
 function newGame(mode = 'main'){
@@ -446,7 +470,7 @@ function newGame(mode = 'main'){
 }
 function resetStage(){
   Object.assign(G, { state:'play', t:0, scroll:0, gauge:-1, flashIdx:-1, flashT:0, shots:[], eb:[], en:[], parts:[], caps:[], texts:[], blocks:[], walls:{}, wallId:0, vents:[],
-    groups:{}, gid:0, eid:0, script:G.mcfg ? buildMonthlyScript(G.mcfg) : buildScript(G.stage), si:0, boss:null, bossDead:false, clearT:0, respawn:0,
+    groups:{}, gid:0, eid:0, gates:[], surge:null, wells:[], script:G.mcfg ? buildMonthlyScript(G.mcfg) : buildScript(G.stage), si:0, boss:null, bossDead:false, clearT:0, respawn:0,
     fireCd:0, misCd:0, snCd:0, shake:0, banner:2.5, rush:null, rushN:0, nextBossT:0, bossBanner:0 });
   GAUGE = gaugeList(G.stage); buildGauge(); TA = 0; updatePanel();
 }
@@ -572,15 +596,15 @@ function spawn(type){
     const g = G.gid++; G.groups[g] = { n:5, k:0 };
     const yb = tunnelCfg() ? band() : type === 'fanLow' ? 230 : band() * .8 + 20, ph = Math.random() * 6;
     const st2 = G.stage >= 2;
-    for (let i = 0; i < 5; i++) G.en.push({ id:G.eid++, kind:'fan', x:W + 20 + i * 30, y:yb, yb, ph, r:9, hp:1, vx:st2 ? -140 : -125, sc:st2 ? 120 : 100, g, t:0, shooter:st2 && i % 2 === 0, cd:1 + Math.random() * 1.5 });
+    for (let i = 0; i < 5; i++) G.en.push({ id:G.eid++, kind:'fan', x:W + 20 + i * 30, y:yb, yb, ph, r:9, hp:1, vx:st2 ? -140 : -125, sc:st2 ? 120 : 100, g, t:0, shooter:G.stage >= 3 || (st2 ? i % 2 === 0 : i === 2), cd:.6 + Math.random() * 1.2 });
   } else if (type === 'dash'){
-    for (let i = 0; i < 3; i++) G.en.push({ id:G.eid++, kind:'dash', x:W + 20 + i * 60, y:band(), r:8, hp:1, vx:-210, vy:0, sc:150, t:0, aimed:false });
+    for (let i = 0; i < 3; i++) G.en.push({ id:G.eid++, kind:'dash', x:W + 20 + i * 60, y:band(), r:8, hp:G.stage >= 3 ? 2 : 1, vx:-210 - 12 * (G.stage - 1), vy:0, sc:150, t:0, aimed:false });
   } else if (type === 'carrier'){
-    const y = band(); G.en.push({ id:G.eid++, kind:'carrier', x:W + 24, y, yb:y, r:12, hp:4, vx:-70, sc:200, t:0 });
+    const y = band(); G.en.push({ id:G.eid++, kind:'carrier', x:W + 24, y, yb:y, r:12, hp:4 + 2 * (G.stage - 1), vx:-70, sc:200, t:0, cd:1.5 });
   } else if (type === 'turrets'){
     if (TA < .6) return spawn('dash');
     const nT = G.stage >= 2 ? 4 : 3;
-    for (let i = 0; i < nT; i++) G.en.push({ id:G.eid++, kind:'tur', wx:G.scroll + W + 30 + i * 80, top:i % 2 === 1, x:W + 30, y:0, r:10, hp:2, sc:300, t:0, cd:1 + Math.random() });
+    for (let i = 0; i < nT; i++) G.en.push({ id:G.eid++, kind:'tur', wx:G.scroll + W + 30 + i * 80, top:i % 2 === 1, x:W + 30, y:0, r:10, hp:2 + Math.floor((G.stage - 1) / 2), sc:300, t:0, cd:1 + Math.random() });
   } else if (type === 'rear'){
     // enters from behind the ship (left edge) and sweeps forward
     // start off-screen far enough for a warning mark, and not straight at the ship
@@ -598,6 +622,20 @@ function spawn(type){
     const w = G.wallId++; G.walls[w] = { n:rows * 2, k:0, lost:false };
     for (let c = 0; c < 2; c++) for (let r = 0; r < rows; r++)
       G.blocks.push({ wx:wx + c * S, y:top + r * S + S / 2, hp:2, chest:c === 0 && r === chest, x:W + 30, w });
+  } else if (type === 'shards'){
+    // STAGE 2: crystals hanging from the ceiling break off and fall as you pass under them
+    if (TA < .6) return spawn('dash');
+    for (let i = 0; i < 5; i++){ const wx = G.scroll + W + 30 + i * 64; G.en.push({ id:G.eid++, kind:'shard', wx, x:W + 30, y:0, r:8, hp:2, sc:80, t:0, fall:false, vy:0 }); }
+  } else if (type === 'gate'){
+    // STAGE 3: laser gates between ceiling and floor; they warn (glow) and then fire for one second
+    if (TA < .6) return spawn('rear');
+    for (let i = 0; i < 2; i++) G.gates.push({ wx:G.scroll + W + 40 + i * 170, t0:G.t + i * 1.3, x:W + 40 });
+  } else if (type === 'surge'){
+    // STAGE 4: the magma floor heaves up for a few seconds
+    if (!G.surge) G.surge = { t0:G.t }; floatText(W / 2, H - 70, 'MAGMA SURGE!', C.coral);
+  } else if (type === 'well'){
+    // STAGE 5: a black hole drifts through and pulls the ship in
+    G.wells.push({ x:W + 70, y:H / 2 + (Math.random() < .5 ? -1 : 1) * (30 + Math.random() * 50), t:0 });
   } else if (type === 'boss'){
     playTrack('boss');
     if (G.mcfg){ G.boss = makeBoss(G.mcfg.boss, false); G.boss.tint = G.mcfg.tint; G.bossBanner = 2.6; return; }
@@ -608,13 +646,13 @@ function spawn(type){
 }
 /* bosses; rush versions (STAGE 5) are weaker so five fights in a row stay reasonable */
 function makeBoss(type, rush){
-  const k = rush ? .6 : 1, hp = n => Math.max(1, Math.round(n * k));
+  const k = rush ? 1.6 : 4, hp = n => Math.max(1, Math.round(n * k)); // 4x the original toughness; anger (below) makes up the rest
   switch (type){
     case 'core':  return { type, x:W + 90, y:H / 2, t:0, hp:hp(24), plates:Array(3).fill(hp(5)), cd:2, vol:0, flash:0, dead:false, mk:1 };
     case 'jelly': return { type, x:W + 90, y:H / 2, t:0, hp:hp(24), cd:1.6, wasOpen:false, flash:0, dead:false };
     case 'fort':  return { type, x:W + 110, y:H / 2, t:0, hp:hp(24), cannons:[{ dy:-64, hp:hp(12), cd:1.5 }, { dy:64, hp:hp(12), cd:2.4 }], cd:2, call:4, flash:0, dead:false };
     case 'worm':  return { type, x:W + 60, y:H / 2, t:0, hp:hp(30), segs:Array.from({ length:rush ? 8 : 10 }, () => ({ hp:rush ? 3 : 4 })), hist:Array.from({ length:80 }, (_, i) => ({ x:W + 60 + (80 - i) * 4, y:H / 2 })), cd:2, flash:0, dead:false };
-    case 'king':  return { type, x:W + 140, y:H / 2, t:0, hp:40, gems:[{ dy:-56, hp:15, cd:1.2 }, { dy:56, hp:15, cd:2.3 }, { dy:-92, hp:15, cd:3.1 }], laser:null, lcd:3.5, rcd:2.5, call:6, flash:0, dead:false };
+    case 'king':  return { type, x:W + 140, y:H / 2, t:0, hp:160, gems:[{ dy:-56, hp:60, cd:1.2 }, { dy:56, hp:60, cd:2.3 }, { dy:-92, hp:60, cd:3.1 }], laser:null, lcd:3.5, rcd:2.5, call:6, flash:0, dead:false };
   }
 }
 function nextRush(){
@@ -637,6 +675,7 @@ function burst(x, y, c, n, s){
 function dropCap(x, y){ G.caps.push({ x, y, t:0 }); if (G.mcfg && G.mcfg.capsX2) G.caps.push({ x:x + 18, y:y + 10, t:.3 }); }
 function killEnemy(e){
   e.dead = true; G.score += e.sc; sfx.small();
+  if (G.stage >= 4 && e.kind !== 'shard' && G.p && Math.abs(e.x - G.p.x) > 50) aim(e.x, e.y, 105); // a parting shot
   burst(e.x, e.y, e.kind === 'carrier' ? C.sun : C.coral, 14, 1);
   if (e.kind === 'carrier') dropCap(e.x, e.y);
   if (e.g != null){ const gr = G.groups[e.g]; gr.k++; if (gr.k === gr.n) dropCap(e.x, e.y); }
@@ -655,9 +694,9 @@ function fire(dt){
   const srcs = [{ x:p.x, y:p.y }, ...optPos()];
   if (G.fireCd <= 0){
     const lance = p.ship === 'lance';
-    G.fireCd = p.weapon === 'b' ? (lance ? .3 : .2) : (lance && p.weapon === 't' ? .19 : .13);
+    G.fireCd = p.weapon === 'b' ? (lance ? .42 : .2) : (lance && p.weapon === 't' ? .21 : .13);
     for (const s of srcs){
-      if (p.weapon === 'b') G.shots.push(lance ? { k:'b', heavy:true, dmg:2, x:s.x + 14, y:s.y, vx:780, vy:0, len:92, hit:new Set() } : { k:'b', x:s.x + 10, y:s.y, vx:640, vy:0, len:50, hit:new Set() });
+      if (p.weapon === 'b') G.shots.push(lance ? { k:'b', heavy:true, dmg:2, x:s.x + 14, y:s.y, vx:760, vy:0, len:76, hit:new Set() } : { k:'b', x:s.x + 10, y:s.y, vx:640, vy:0, len:50, hit:new Set() });
       else {
         G.shots.push({ k:'n', x:s.x + 10, y:s.y, vx:440, vy:0 });
         if (p.weapon === 't'){
@@ -671,7 +710,7 @@ function fire(dt){
   if (p.snipers > 0){
     G.snCd -= dt;
     if (G.snCd <= 0){
-      G.snCd = p.ship === 'lance' ? .9 : .45;
+      G.snCd = p.ship === 'lance' ? 1 : .45;
       for (const s of sniperPos()){
         const tg = sniperTarget(s); if (!tg) continue;
         const a = Math.atan2(tg.y - s.y, tg.x - s.x); s.a = a;
@@ -681,7 +720,7 @@ function fire(dt){
     }
   }
   if (p.missile && G.misCd <= 0){
-    if (p.ship === 'lance'){ G.misCd = 1; for (const s of srcs){ G.shots.push({ k:'m', x:s.x, y:s.y + 4, vx:70, vy:170, ground:false }); G.shots.push({ k:'m', up:true, x:s.x, y:s.y - 4, vx:70, vy:-170, ground:false }); } }
+    if (p.ship === 'lance'){ G.misCd = 1; for (const s of srcs){ G.shots.push({ k:'m', dmg:1, x:s.x, y:s.y + 4, vx:70, vy:170, ground:false }); G.shots.push({ k:'m', dmg:1, up:true, x:s.x, y:s.y - 4, vx:70, vy:-170, ground:false }); } }
     else { G.misCd = .5; for (const s of srcs) G.shots.push({ k:'m', x:s.x, y:s.y + 4, vx:70, vy:170, ground:false }); }
   }
 }
@@ -701,7 +740,7 @@ function hurtPlayer(){
   const p = G.p; if (!p || p.inv > 0) return;
   if (p.shield > 0){
     p.shield--; p.inv = .6; sfx.hit(); updatePanel();
-    if (p.ship === 'lance'){ for (const b of G.eb) if (d2(b, p) < 90 * 90){ b.dead = true; burst(b.x, b.y, '#ffd27a', 3, .4); } G.shake = .2; G.ring = { x:p.x, y:p.y, at:performance.now() }; }
+    if (p.ship === 'lance'){ for (const b of G.eb) if (d2(b, p) < 70 * 70){ b.dead = true; burst(b.x, b.y, '#ffd27a', 3, .4); } G.shake = .2; G.ring = { x:p.x, y:p.y, at:performance.now() }; }
     return;
   }
   killPlayer();
@@ -722,6 +761,7 @@ function updatePlayer(dt){
   if (!last || Math.abs(last.x - p.x) + Math.abs(last.y - p.y) > 1){ p.hist.push({ x:p.x, y:p.y }); if (p.hist.length > 40) p.hist.shift(); }
   fire(dt);
   const wx = p.x + G.scroll, cy = ceilY(wx), fy = floorY(wx);
+  if (p.inv <= 0) for (const g of G.gates){ if (gateOn(g) && Math.abs(p.x - g.x) < 9 && g.x < W){ killPlayer(); return; } }
   if (p.inv <= 0) for (const v of G.vents){ const c = ventColumn(v); if (c && Math.abs(p.x - v.x) < 13 && p.y > c.y0 - 4 && p.y < c.y1 + 4){ killPlayer(); return; } }
   for (const k of G.blocks){
     if (k.dead || Math.abs(p.x - k.x) > 11 || Math.abs(p.y - k.y) > 11) continue;
@@ -734,8 +774,19 @@ function updatePlayer(dt){
 }
 
 /* ---------- boss ---------- */
+/* how much of the boss is left (core + every breakable part), 1 = untouched */
+function bossLife(b){
+  let v = Math.max(0, b.hp);
+  for (const a of [b.plates, b.cannons, b.segs, b.gems]) if (a) for (const x of a) v += Math.max(0, typeof x === 'number' ? x : x.hp);
+  return v;
+}
 function updateBoss(dt){
   const b = G.boss; if (!b || b.dead) return;
+  // anger: the more damage it has taken, the faster it moves and fires (up to 1.8x), with a warning flash at half and a quarter
+  if (b.life0 == null) b.life0 = bossLife(b) || 1;
+  const left = bossLife(b) / b.life0, stage = left < .25 ? 2 : left < .5 ? 1 : 0;
+  if (stage > (b.anger || 0)){ b.anger = stage; G.shake = .4; floatText(b.x - 30, b.y - 40, stage === 2 ? 'RAGE!!' : 'ANGER!', C.coral); sfx.die(); }
+  dt *= 1 + .8 * (1 - left);
   if (b.type === 'jelly') return updateJelly(b, dt);
   if (b.type === 'worm') return updateWorm(b, dt);
   if (b.type === 'king') return updateKing(b, dt);
@@ -1111,20 +1162,39 @@ function update(dt){
   for (const e of G.en){
     e.t += dt;
     if (e.kind === 'fan'){ e.x += e.vx * dt; e.y = e.yb + 40 * Math.sin(e.x * .026 + e.ph);
-      if (e.shooter){ e.cd -= dt; if (e.cd <= 0 && e.x < W - 20 && e.x > 60){ e.cd = 2.2 + Math.random(); aim(e.x, e.y, 120); } } }
+      if (e.shooter){ e.cd -= dt; if (e.cd <= 0 && e.x < W - 20 && e.x > 60){ e.cd = (2.2 + Math.random()) / fireK(); aim(e.x, e.y, 120); } } }
     else if (e.kind === 'dash'){
-      if (!e.aimed && e.x < W - 30 && G.p){ e.aimed = true; const tt = Math.max(.4, (e.x - G.p.x) / 210); e.vy = Math.max(-140, Math.min(140, (G.p.y - e.y) / tt)); }
+      if (!e.aimed && e.x < W - 30 && G.p){ e.aimed = true; const tt = Math.max(.4, (e.x - G.p.x) / 210); e.vy = Math.max(-140, Math.min(140, (G.p.y - e.y) / tt)); if (G.stage >= 3) aim(e.x, e.y, 140); }
       e.x += e.vx * dt; e.y += e.vy * dt;
     }
-    else if (e.kind === 'carrier'){ e.x += e.vx * dt; e.y = e.yb + 26 * Math.sin(e.t * 2.2); }
+    else if (e.kind === 'carrier'){ e.x += e.vx * dt; e.y = e.yb + 26 * Math.sin(e.t * 2.2);
+      if (G.stage >= 2){ e.cd -= dt; if (e.cd <= 0 && e.x < W - 20 && e.x > 80){ e.cd = 2.4 / fireK(); for (let k = -1; k <= 1; k++){ const a = Math.PI + k * .3; G.eb.push({ x:e.x - 10, y:e.y, vx:Math.cos(a) * 120, vy:Math.sin(a) * 120 }); } } } }
     else if (e.kind === 'rear'){ e.x += e.vx * dt; e.y = e.yb + 30 * Math.sin(e.t * 3 + e.ph); }
+    else if (e.kind === 'shard'){
+      e.x = e.wx - G.scroll;
+      if (!e.fall){ e.y = ceilY(e.wx) + 9; if (G.p && e.x - G.p.x < 120 && e.x > G.p.x - 10){ e.fall = true; e.shake = 0; } }
+      else { e.vy += 820 * dt; e.y += e.vy * dt; if (e.y > floorY(e.wx) - 4){ e.dead = true; burst(e.x, e.y, '#ff9a8a', 8, .6); } }
+    }
     else if (e.kind === 'ember'){ e.vy += 300 * dt * e.g2; e.x += e.vx * dt; e.y += e.vy * dt; }
     else if (e.kind === 'tur'){
       e.x = e.wx - G.scroll; e.y = e.top ? ceilY(e.wx) + 6 : floorY(e.wx) - 6;
-      e.cd -= dt; if (e.cd <= 0 && e.x < W - 10 && e.x > 40){ e.cd = 1.8 + Math.random() * .6; aim(e.x, e.y, 130); }
+      e.cd -= dt; if (e.cd <= 0 && e.x < W - 10 && e.x > 40){ e.cd = (1.8 + Math.random() * .6) / fireK(); aim(e.x, e.y, 130); }
     }
     if ((e.kind === 'rear' ? e.x > W + 40 : e.x < -40) || e.y < -40 || e.y > H + 40) e.dead = true;
   }
+  // gimmicks
+  for (const g of G.gates){ g.x = g.wx - G.scroll; if (g.x < -30) g.dead = true; }
+  G.gates = G.gates.filter(g => !g.dead);
+  if (G.surge && G.t - G.surge.t0 > 6) G.surge = null;
+  for (const w of G.wells){
+    w.t += dt; w.x -= 42 * dt; if (w.x < -80) w.dead = true;
+    const p = G.p; if (!p) continue;
+    const dx = w.x - p.x, dy = w.y - p.y, d = Math.hypot(dx, dy) || 1;
+    if (d < 13 && p.inv <= 0){ killPlayer(); continue; }
+    const pull = Math.min(150, 5200 / Math.max(d, 30)); // weaker than the ship far away, too strong up close p.x += dx / d * pull * dt; p.y += dy / d * pull * dt; clampP();
+    for (const b of G.eb){ const bx = w.x - b.x, by = w.y - b.y, bd = Math.hypot(bx, by) || 1; if (bd < 120){ b.vx += bx / bd * 260 * dt; b.vy += by / bd * 260 * dt; } if (bd < 12) b.dead = true; }
+  }
+  G.wells = G.wells.filter(w => !w.dead);
   updateBoss(dt);
   for (const v of G.vents){
     v.x = v.wx - G.scroll; if (v.x < -40){ v.dead = true; continue; }
@@ -1155,7 +1225,8 @@ function update(dt){
     if (!s.dead) shotVsBoss(s);
   }
 
-  for (const b of G.eb){ b.x += b.vx * dt; b.y += b.vy * dt; if (b.x < -10 || b.x > W + 10 || b.y < -10 || b.y > H + 10) b.dead = true; }
+  const bk = bulletK();
+  for (const b of G.eb){ b.x += b.vx * dt * bk; b.y += b.vy * dt * bk; if (b.x < -10 || b.x > W + 10 || b.y < -10 || b.y > H + 10) b.dead = true; }
   for (const c of G.caps){ c.t += dt; c.x -= 50 * dt; if (c.x < -20) c.dead = true; }
 
   const p = G.p;
@@ -1563,7 +1634,12 @@ function drawLeaf(x, y, s, blink){
 }
 function drawEnemy(e){
   ctx.save(); ctx.translate(e.x, e.y);
-  if (e.kind === 'fan'){
+  if (e.kind === 'shard'){
+    const jig = e.fall ? 0 : (G && G.p && e.x - G.p.x < 170 ? Math.sin(e.t * 40) * 1.2 : 0);
+    ctx.translate(jig, 0);
+    ctx.fillStyle = '#c4364a'; ctx.beginPath(); ctx.moveTo(-7, -9); ctx.lineTo(7, -9); ctx.lineTo(0, 12); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#ffb3a8'; ctx.beginPath(); ctx.moveTo(-2, -9); ctx.lineTo(4, -9); ctx.lineTo(0, 9); ctx.closePath(); ctx.fill();
+  } else if (e.kind === 'fan'){
     ctx.rotate(e.t * 4); ctx.fillStyle = C.coral; ctx.fillRect(-6, -6, 12, 12);
     ctx.fillStyle = e.shooter ? C.ink : C.sea; ctx.fillRect(-2, -2, 4, 4);
   } else if (e.kind === 'dash'){
@@ -1630,6 +1706,33 @@ function draw(){
     ctx.fillStyle = k.chest ? C.sun : terrCol('reef'); ctx.globalAlpha = k.hp >= 2 ? 1 : .7; ctx.fillRect(k.x - 7, k.y - 7, 14, 14);
     ctx.globalAlpha = 1; ctx.strokeStyle = k.chest ? C.sea : terrCol('edge'); ctx.lineWidth = 1; ctx.strokeRect(k.x - 6.5, k.y - 6.5, 13, 13);
     if (k.hp < 2){ ctx.beginPath(); ctx.moveTo(k.x - 4, k.y - 5); ctx.lineTo(k.x + 1, k.y); ctx.lineTo(k.x - 2, k.y + 5); ctx.stroke(); }
+  }
+  for (const w of G.wells){ // black hole: dark core, spinning accretion ring, faint pull lines
+    ctx.save(); ctx.translate(w.x, w.y);
+    const g = ctx.createRadialGradient(0, 0, 4, 0, 0, 60); g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(.22, 'rgba(10,0,25,.95)'); g.addColorStop(.5, 'rgba(120,60,200,.25)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, 60, 0, 6.283); ctx.fill();
+    for (let k = 0; k < 3; k++){ ctx.rotate(w.t * (1.6 + k * .5)); ctx.strokeStyle = k === 1 ? 'rgba(230,195,106,.8)' : 'rgba(170,120,255,.7)'; ctx.lineWidth = 2 - k * .4; ctx.beginPath(); ctx.ellipse(0, 0, 18 + k * 9, 7 + k * 3, 0, 0, 4.4); ctx.stroke(); }
+    ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(0, 0, 10, 0, 6.283); ctx.fill();
+    ctx.restore();
+  }
+  for (const g of G.gates){ // laser gate: emitters on ceiling and floor, warning flicker, then the beam
+    const top = ceilY(g.wx), bot = floorY(g.wx), st = gateState(g);
+    for (const [y, d] of [[top, 1], [bot, -1]]){ // emitter housings with a red lens
+      ctx.fillStyle = '#11161e'; ctx.fillRect(g.x - 11, y - d * 4 - (d < 0 ? 14 : 0), 22, 18);
+      ctx.fillStyle = '#6b7588'; ctx.fillRect(g.x - 9, y - d * 2 - (d < 0 ? 12 : 0), 18, 13);
+      ctx.fillStyle = st === 'off' ? '#5a2020' : '#ff4a3a'; ctx.beginPath(); ctx.arc(g.x, y + d * 9, 4, 0, 6.283); ctx.fill();
+      if (st !== 'off'){ ctx.fillStyle = '#ffd0c0'; ctx.beginPath(); ctx.arc(g.x, y + d * 9, 1.8, 0, 6.283); ctx.fill(); }
+    }
+    if (st === 'warn'){ ctx.strokeStyle = '#ff6a5a'; ctx.globalAlpha = .25 + .3 * Math.abs(Math.sin(G.t * 30)); ctx.lineWidth = 1; ctx.setLineDash([4, 5]); ctx.beginPath(); ctx.moveTo(g.x, top + 13); ctx.lineTo(g.x, bot - 13); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1; }
+    if (st === 'on'){ ctx.strokeStyle = '#ff3a2a'; ctx.globalAlpha = .35; ctx.lineWidth = 12; ctx.beginPath(); ctx.moveTo(g.x, top + 13); ctx.lineTo(g.x, bot - 13); ctx.stroke(); ctx.globalAlpha = 1; ctx.strokeStyle = '#fff0e0'; ctx.lineWidth = 3; ctx.stroke(); }
+  }
+  if (G.surge){ // magma surge: the floor edge flashes during the warning, then glows while raised
+    const t = G.t - G.surge.t0, warn = t < 1.5;
+    if (!warn || Math.floor(t * 8) % 2 === 0){
+      ctx.strokeStyle = '#ff5a1a'; ctx.globalAlpha = warn ? .8 : .5; ctx.lineWidth = warn ? 4 : 6; ctx.beginPath();
+      for (let x = 0; x <= W; x += 8){ const y = floorY(x + G.scroll); x ? ctx.lineTo(x, y) : ctx.moveTo(x, y); } ctx.stroke(); ctx.globalAlpha = 1;
+    }
+    if (warn){ ctx.fillStyle = C.coral; ctx.font = '700 13px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-mono'); ctx.textAlign = 'center'; ctx.fillText('▲ MAGMA SURGE ▲', W / 2, H - 50); }
   }
   G.en.forEach(drawEnemy);
   const warn = G.en.find(e => e.kind === 'rear' && e.x < 0 && !e.dead);
@@ -1938,6 +2041,10 @@ const TUT_PAGES = [
       <div class="tut-item"><canvas data-fig="die-wall"></canvas><h3>上下の壁にふれる</h3><p>洞窟の天井と床（青緑の地形）にふれるとミス。SHIELD があっても防げません。</p></div>
       <div class="tut-item"><canvas data-fig="die-block"></canvas><h3>壊せる壁にふれる <small>STAGE 3</small></h3><p>ステーションの隔壁（四角いブロックの列）も、ふれるとミス。撃って穴を開けて通ります。</p></div>
       <div class="tut-item"><canvas data-fig="die-vent"></canvas><h3>噴き上がる熱水にふれる <small>STAGE 4</small></h3><p>噴出孔の口が光って泡が出たら、もうすぐ熱水が噴き上がる合図。噴いている柱にふれるとミス（SHIELD でも防げません）。噴き終わるまで待つか、柱の手前で止まりましょう。</p></div>
+      <div class="tut-item"><canvas data-fig="gm-shard"></canvas><h3>落ちてくる結晶 <small>STAGE 2</small></h3><p>天井の赤い結晶は、真下に近づくと震えて落ちてきます。撃てば壊せます。下を通るときは早めに撃つか、通り過ぎてから。</p></div>
+      <div class="tut-item"><canvas data-fig="gm-gate"></canvas><h3>レーザーゲート <small>STAGE 3</small></h3><p>天井と床の発射口の間に、赤いレーザーが出ます。点線がチカチカしたら発射の合図。消えているうちに通り抜けます。</p></div>
+      <div class="tut-item"><canvas data-fig="gm-surge"></canvas><h3>溶岩の大波 <small>STAGE 4</small></h3><p>「MAGMA SURGE」の表示と床の点滅のあと、床がせり上がります。すぐに上へ逃げましょう。</p></div>
+      <div class="tut-item"><canvas data-fig="gm-well"></canvas><h3>ブラックホール <small>STAGE 5</small></h3><p>近づくほど強く引き寄せられ、中心に触れるとミス。敵の弾も曲げます。逆方向へ動き続けて振り切ります。</p></div>
       <div class="tut-item"><canvas data-fig="die-boss"></canvas><h3>ボスにぶつかる</h3><p>ボスの六角形の本体と、前にある装甲にふれるとミス。</p></div>
     </div>
     <p class="tut-note">ミスすると残機が1つ減り、強化はすべてなくなります。残機0でミスするとゲームオーバー。復活した直後、機体が点滅している約2秒間は無敵です。</p>` },
@@ -1975,7 +2082,7 @@ const TUT_PAGES = [
       <div class="tut-item"><canvas data-fig="it-beam"></canvas><h3>BEAM</h3><p>敵をつらぬく長いビーム。並んだ敵をまとめて倒せます。</p></div>
       <div class="tut-item"><canvas data-fig="it-drone"></canvas><h3>DRONE</h3><p>自機の後をついてくる分身。自機と同じ弾を撃ちます。2つまで。</p></div>
       <div class="tut-item"><canvas data-fig="it-sniper"></canvas><h3>SNIPER <small>STAGE 2 から</small></h3><p>自機の上下に付く発射口。近くの敵を自動でねらって撃ちます。2つまで。</p></div>
-      <div class="tut-item"><canvas data-fig="it-shield"></canvas><h3>SHIELD</h3><p>バリア。敵の弾や体当たりを防ぎます（LEAF は4回、LANCE は3回。壁は防げません）。</p></div>
+      <div class="tut-item"><canvas data-fig="it-shield"></canvas><h3>SHIELD</h3><p>バリア。敵の弾や体当たりを防ぎます（LEAF は4回、LANCE は2回。壁は防げません）。</p></div>
     </div>
     <p class="tut-note">ゲージで薄く表示されている強化は、もう最大なので取れません。強化はステージをまたいで引き継がれ、ミスするとすべてなくなります。</p>` },
   { tab:'機体', html:`
@@ -2036,9 +2143,19 @@ const CMP_FIGS = {
   SHIELD:{
     leaf(w, h){ const x = w * .35, y = h / 2; drawLeaf(x, y, 1, false); ctx.strokeStyle = C.leaf; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(x + 2, y, 18, -1.15, 1.15); ctx.stroke(); fx.bullet(x + 28, y - 4); fx.label(w * .75, y + 4, '4回', C.sun); },
     lance(w, h){ const x = w * .35, y = h / 2; drawLance(x, y, 1, false); ctx.strokeStyle = '#ffd27a'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 22, 0, 6.283); ctx.stroke(); ctx.globalAlpha = .5; ctx.beginPath(); ctx.arc(x, y, 32, 0, 6.283); ctx.stroke(); ctx.globalAlpha = 1;
-      for (const [dx, dy] of [[40, -14], [44, 10], [-34, 12]]){ ctx.fillStyle = '#ffd27a'; ctx.globalAlpha = .6; ctx.fillRect(x + dx - 1, y + dy - 1, 3, 3); } ctx.globalAlpha = 1; fx.label(w * .78, y + 4, '3回＋弾消し', C.sun); } }
+      for (const [dx, dy] of [[40, -14], [44, 10], [-34, 12]]){ ctx.fillStyle = '#ffd27a'; ctx.globalAlpha = .6; ctx.fillRect(x + dx - 1, y + dy - 1, 3, 3); } ctx.globalAlpha = 1; fx.label(w * .78, y + 4, '2回＋弾消し', C.sun); } }
 };
 const FIGS_EXTRA = {
+  'gm-shard'(w, h){ fx.ground(w, 10, true); const x0 = w * .55; [0, 1, 2].forEach(i => drawEnemy({ kind:'shard', x:x0 + i * 30, y:i === 0 ? 46 : 19, t:0, fall:i === 0 }));
+    dash([[x0, 24], [x0, 40]], C.coral); drawLeaf(x0 - 34, h - 16, 1, false); fx.label(x0 + 2, h - 4, '落ちる', C.coral); },
+  'gm-gate'(w, h){ fx.ground(w, h - 8, false); fx.ground(w, 8, true); const x = w * .55; ctx.fillStyle = '#3a4250'; ctx.fillRect(x - 8, 8, 16, 9); ctx.fillRect(x - 8, h - 17, 16, 9);
+    ctx.strokeStyle = '#ff3a2a'; ctx.globalAlpha = .35; ctx.lineWidth = 12; ctx.beginPath(); ctx.moveTo(x, 17); ctx.lineTo(x, h - 17); ctx.stroke(); ctx.globalAlpha = 1; ctx.strokeStyle = '#fff0e0'; ctx.lineWidth = 3; ctx.stroke();
+    drawLeaf(x - 50, h / 2, 1, false); fx.label(x + 44, h / 2 + 4, '1秒間', C.coral); },
+  'gm-surge'(w, h){ const fy = h - 30; ctx.fillStyle = '#2b1b16'; ctx.fillRect(0, fy, w, h - fy); ctx.strokeStyle = '#ff5a1a'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(0, fy); ctx.lineTo(w, fy); ctx.stroke();
+    ctx.setLineDash([3, 4]); ctx.strokeStyle = '#ff5a1a'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, h - 8); ctx.lineTo(w, h - 8); ctx.stroke(); ctx.setLineDash([]); for (const ax of [w * .2, w * .8]){ ctx.strokeStyle = C.coral; ctx.lineWidth = 1.8; ctx.beginPath(); ctx.moveTo(ax, h - 10); ctx.lineTo(ax, fy + 6); ctx.moveTo(ax - 5, fy + 11); ctx.lineTo(ax, fy + 6); ctx.lineTo(ax + 5, fy + 11); ctx.stroke(); }
+    drawLeaf(w * .55, 18, 1, false); fx.label(w * .55, fy - 6, '▲ MAGMA SURGE ▲', C.coral); },
+  'gm-well'(w, h){ const x = w * .62, y = h / 2; const g = ctx.createRadialGradient(x, y, 3, x, y, 34); g.addColorStop(0, '#000'); g.addColorStop(.5, 'rgba(120,60,200,.35)'); g.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, 34, 0, 6.283); ctx.fill();
+    ctx.strokeStyle = 'rgba(230,195,106,.8)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.ellipse(x, y, 20, 7, .3, 0, 5); ctx.stroke(); drawLeaf(w * .25, y + 6, 1, false); fx.arrow(w * .3, y + 6, w * .45, C.coral); fx.label(x, h - 4, '引き寄せる', C.coral); },
   'ship-leaf'(w, h){ const y = h / 2; drawLeaf(w * .3, y, 1.5, false); for (let i = 1; i <= 3; i++){ fx.shot(w * .3 + 24 + i * 22, y); } },
   'ship-lance'(w, h){ const y = h / 2; drawLance(w * .3, y, 1.5, false); ctx.strokeStyle = '#ffd27a'; ctx.lineWidth = 2; for (let i = 1; i <= 3; i++){ ctx.beginPath(); ctx.moveTo(w * .3 + 24 + i * 22, y); ctx.lineTo(w * .3 + 15 + i * 22, y); ctx.stroke(); } }
 };
