@@ -70,6 +70,12 @@ canvas{display:block;border-radius:6px;outline:1px solid var(--line)}
 .ship-card canvas{width:100%;height:54px;border-radius:6px;pointer-events:none}
 .ship-card b{font:700 14px var(--f-display);letter-spacing:.06em;display:flex;gap:8px;align-items:baseline}.ship-card b small{font:500 11px var(--f-body);color:var(--mute)}
 .ship-card span{font-size:12px;color:var(--mute);line-height:1.5}
+.cmp{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.cmp-pair{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.cmp-pair figure{margin:0;display:flex;flex-direction:column;gap:4px;min-width:0}
+.cmp-pair canvas{width:100%;height:70px;border-radius:5px}
+.cmp-pair figcaption{font-size:12px;line-height:1.5;color:var(--ink)}
+.cmp-pair figcaption b{display:block;font:700 11px var(--f-mono);letter-spacing:.06em}.cmp-pair b.leaf{color:var(--leaf)}.cmp-pair b.lance{color:#ffd27a}
 .ship-fx{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;margin:4px 0 0;font-size:12px}.ship-fx dt{font:700 11px var(--f-mono);color:var(--sun)}.ship-fx dd{margin:0;color:var(--ink)}
 .mode-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .mode-row .lbl{font:500 11px var(--f-mono);letter-spacing:.12em;color:var(--mute)}
@@ -128,11 +134,15 @@ canvas{display:block;border-radius:6px;outline:1px solid var(--line)}
 .seg-sm button{padding:5px 12px;font-size:12px}
 .board-period{margin:0;font-size:12px;color:var(--mute)}
 .board{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;border-top:1px solid var(--line)}
-.board li{display:grid;grid-template-columns:2.2em 1fr auto;gap:10px;align-items:baseline;padding:7px 2px;border-bottom:1px solid var(--line);font-size:14px}
+.board li{display:grid;grid-template-columns:2.2em 1fr auto auto;gap:10px;align-items:baseline;padding:7px 2px;border-bottom:1px solid var(--line);font-size:14px}
 .board .rk{font-family:var(--f-mono);font-size:11px;color:var(--mute)}
 .board li:first-child .rk{color:var(--sun)}
 .board .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .board .pt{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.board .tags{display:flex;gap:4px;align-self:center}
+.board .tg{font:600 10px var(--f-mono);letter-spacing:.04em;padding:1px 6px;border-radius:4px;border:1px solid var(--line);color:var(--mute)}
+.board .tg.leaf{color:var(--leaf);border-color:var(--leaf)}.board .tg.lance{color:#ffd27a;border-color:#ffd27a}
+@media (max-width:380px){.board .tg.it{display:none}}
 .board li.me{background:rgba(92,200,255,.1)}
 .board li.me .nm::after{content:"  あなた";color:var(--leaf);font-size:11px}
 .board-note{font-size:13px;color:var(--mute);margin:0;line-height:1.6}
@@ -202,6 +212,13 @@ const SHIPS = {
 let shipId = store.get('bls_ship') === 'lance' ? 'lance' : 'leaf';
 const ship = () => SHIPS[(G && G.ship) || shipId];
 const itemName = n => ship().labels[n] || n;
+// ranking row tags: which ship and which item mode the score was made with (older scores have neither)
+function rankTags(r){
+  const t = document.createElement('span'); t.className = 'tags';
+  if (SHIPS[r.ship]){ const a = document.createElement('span'); a.className = 'tg ' + r.ship; a.textContent = SHIPS[r.ship].name; t.appendChild(a); }
+  if (r.items === 'auto' || r.items === 'manual'){ const b = document.createElement('span'); b.className = 'tg it'; b.textContent = r.items === 'auto' ? 'AUTO' : 'MANUAL'; t.appendChild(b); }
+  return t;
+}
 
 /* ---------- layout ---------- */
 function resize(){
@@ -418,7 +435,7 @@ function buildScript(stage){
 function newGame(mode = 'main'){
   initAudio(); audioUnlocked = true; playTrack('stage');
   const mcfg = mode === 'monthly' ? monthlyNow() : null;
-  G = { state:'play', ship:shipId, mode:mcfg ? 'monthly' : 'main', mcfg, stage:mcfg ? mcfg.base : 1, score:0, lives:mcfg ? mcfg.lives : 2, paused:false, p:null, hinted:false };
+  G = { state:'play', ship:shipId, items:itemMode, mode:mcfg ? 'monthly' : 'main', mcfg, stage:mcfg ? mcfg.base : 1, score:0, lives:mcfg ? mcfg.lives : 2, paused:false, p:null, hinted:false };
   resetStage(); spawnPlayer(); hideOverlay();
   if (mcfg) for (const n of mcfg.startItems || []) if (ITEMS[n] && ITEMS[n].can(G.p)) ITEMS[n].apply(G.p);
   updatePanel();
@@ -520,6 +537,7 @@ function gainCapsule(){
 }
 function setMode(m){
   itemMode = m === 'manual' ? 'manual' : 'auto'; store.set('bls_mode', itemMode);
+  if (G && itemMode === 'manual') G.items = 'manual'; // a run counts as MANUAL once it is switched to MANUAL
   if (G) G.gauge = -1;
   overlay.querySelectorAll('[data-act="mode"]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === itemMode)));
   overlay.querySelectorAll('.mode-desc').forEach(d => d.textContent = modeDesc());
@@ -1692,6 +1710,7 @@ const CFG = window.BLS_CONFIG || {};
 const RANK_ON = !!(CFG.supabaseUrl && CFG.supabaseKey);
 const boards = { month:[], year:[], stage:[] };
 let modeColumn = true; // false until the database migration that adds scores.mode has been run
+let tagColumns = true; // false until the migration that adds scores.ship / scores.items has been run
 let period = 'month', rankReady = false, rankError = false, lastLoad = 0;
 const mine = new Set((() => { try { return JSON.parse(store.get('bls_mine') || '[]'); } catch(e){ return []; } })());
 const jstNow = () => new Date(Date.now() + 9 * 3600e3);
@@ -1717,7 +1736,7 @@ function topByName(rows){
   for (const r of rows || []){
     const name = cleanName(r.name) || 'NO NAME', score = Number(r.score);
     if (!Number.isFinite(score) || seen.has(name)) continue;
-    seen.add(name); out.push({ id:r.id, name, score }); if (out.length === 10) break;
+    seen.add(name); out.push({ id:r.id, name, score, ship:r.ship, items:r.items }); if (out.length === 10) break;
   }
   return out;
 }
@@ -1726,13 +1745,17 @@ async function loadBoard(force){
   if (!force && Date.now() - lastLoad < 15000) return;
   lastLoad = Date.now();
   try {
-    const m0 = monthlyNow(), base = 'scores?select=id,name,score&order=score.desc,created_at.asc&limit=60';
+    const m0 = monthlyNow(), base = () => `scores?select=id,name,score${tagColumns ? ',ship,items' : ''}&order=score.desc,created_at.asc&limit=60`;
     const since = k => `&created_at=gte.${encodeURIComponent(periodStart(k))}`;
-    const q = (k, mode) => sb(base + since(k) + (mode && modeColumn ? `&mode=eq.${mode}` : ''));
+    const q = (k, mode) => sb(base() + since(k) + (mode && modeColumn ? `&mode=eq.${mode}` : ''));
+    const all = () => Promise.all([q('month', 'main'), q('year', 'main'), m0 ? q('month', m0.rankKey) : []]);
     let m, y, s = [];
-    try { [m, y, s] = await Promise.all([q('month', 'main'), q('year', 'main'), m0 ? q('month', m0.rankKey) : []]); }
+    const tagsAsked = tagColumns; // another load may switch it off while this one is in flight
+    try { [m, y, s] = await all(); }
     catch(e){
       if (e.status !== 400) throw e;
+      // try again without the ship / item columns (database not migrated yet), then without the mode column
+      if (tagsAsked){ tagColumns = false; try { [m, y, s] = await all(); boards.month = topByName(m); boards.year = topByName(y); boards.stage = topByName(s); rankError = false; rankReady = true; renderBoards(); return; } catch(e2){ if (e2.status !== 400) throw e2; } }
       // the mode column is not there yet: show every score as the main game and leave the monthly board empty
       modeColumn = false; [m, y] = await Promise.all([q('month'), q('year')]); s = [];
     }
@@ -1754,7 +1777,7 @@ function renderBoards(){
       const rk = document.createElement('span'); rk.className = 'rk'; rk.textContent = String(i + 1).padStart(2, '0');
       const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = r.name;
       const pt = document.createElement('span'); pt.className = 'pt'; pt.textContent = r.score.toLocaleString();
-      li.append(rk, nm, pt); ol.appendChild(li);
+      li.append(rk, nm, rankTags(r), pt); ol.appendChild(li);
     });
     let msg = '';
     if (!RANK_ON) msg = 'ランキングは準備中です。';
@@ -1775,7 +1798,7 @@ function entryBlock(score){
   if (monthly && !modeColumn) return `<p class="board-note">今月のステージのランキングは準備中です。</p>`;
   myBest = Number(store.get(bestKey())) || 0;
   if (myBest && score <= myBest) return `<p class="board-note">今月この端末から登録した${monthly ? '今月のステージの' : ''}最高記録：${myBest.toLocaleString()}（これを超えると登録できます）</p>`;
-  return `<form class="entry" data-score="${score}" data-mode="${curMode()}"><label for="nick">名前を入れて${monthly ? '今月のステージの' : '月間・年間'}ランキングに登録（12文字まで）</label><input id="nick" maxlength="12" autocomplete="nickname" placeholder="プレイヤー名"><button class="btn" type="submit">登録</button></form>`;
+  return `<form class="entry" data-score="${score}" data-mode="${curMode()}" data-ship="${G ? G.ship : shipId}" data-items="${G ? G.items : itemMode}"><label for="nick">名前を入れて${monthly ? '今月のステージの' : '月間・年間'}ランキングに登録（12文字まで）</label><input id="nick" maxlength="12" autocomplete="nickname" placeholder="プレイヤー名"><button class="btn" type="submit">登録</button></form>`;
 }
 overlay.addEventListener('submit', async e => {
   e.preventDefault();
@@ -1783,8 +1806,12 @@ overlay.addEventListener('submit', async e => {
   const name = cleanName(input.value) || 'NO NAME';
   btn.disabled = true; btn.textContent = '登録中…'; store.set('bls_nick', name);
   try {
-    const mode = f.dataset.mode || 'main';
-    const id = await sb('rpc/submit_score', modeColumn ? { p_name:name, p_score:score, p_mode:mode } : { p_name:name, p_score:score });
+    const mode = f.dataset.mode || 'main', tags = { p_ship:f.dataset.ship || 'leaf', p_items:f.dataset.items || 'auto' };
+    const base = modeColumn ? { p_name:name, p_score:score, p_mode:mode } : { p_name:name, p_score:score };
+    let id;
+    // send which ship and item mode were used; fall back to the older function until the database is migrated
+    try { id = await sb('rpc/submit_score', tagColumns && modeColumn ? { ...base, ...tags } : base); }
+    catch(err){ if (!(tagColumns && modeColumn) || (err.status !== 404 && err.status !== 400)) throw err; tagColumns = false; id = await sb('rpc/submit_score', base); }
     if (id != null){ mine.add(id); store.set('bls_mine', JSON.stringify([...mine].slice(-50))); }
     myBest = score; store.set(bestKey(), String(score));
     const p = document.createElement('p'); p.className = 'board-note'; p.textContent = `「${name}」で ${score.toLocaleString()} 点を登録しました。`;
@@ -1898,6 +1925,7 @@ function showPause(){
 
 /* ---------- tutorial ---------- */
 let tutFrom = 'title';
+const CMP_ITEMS = ['SPEED', 'MISSILE', 'TWIN', 'BEAM', 'DRONE', 'SNIPER', 'SHIELD'];
 const TUT_PAGES = [
   { tab:'ミスになるとき', html:`
     <div class="tut-list two">
@@ -1947,9 +1975,11 @@ const TUT_PAGES = [
     </div>
     <p class="tut-note">ゲージで薄く表示されている強化は、もう最大なので取れません。強化はステージをまたいで引き継がれ、ミスするとすべてなくなります。</p>` },
   { tab:'機体', html:`
-    <p class="tut-note">タイトル画面で2つの機体から選べます。アイテムは同じでも、取ったときの効果が機体ごとに違います。</p>
-    <div class="tut-list two">${Object.entries(SHIPS).map(([id, S]) => `<div class="tut-item"><canvas data-fig="ship-${id}"></canvas><h3>${S.name} <small>${S.jp}</small></h3><p>${S.desc}</p>
-      <dl class="ship-fx">${Object.entries(S.fx).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl></div>`).join('')}</div>` },
+    <p class="tut-note">機体は LEAF と LANCE の2種類。同じアイテムでも、機体によって攻撃の形が変わります。どちらが自分に合うかは、遊びながら確かめてみてください。</p>
+    <div class="tut-list two">${Object.entries(SHIPS).map(([id, S]) => `<div class="tut-item"><canvas data-fig="ship-${id}"></canvas><h3>${S.name} <small>${S.jp}</small></h3><p>${S.desc}</p></div>`).join('')}</div>
+    <div class="cmp">${CMP_ITEMS.map(n => `<div class="tut-item cmp-row"><h3>${n}${SHIPS.lance.labels[n] ? ' / ' + SHIPS.lance.labels[n] : ''}</h3>
+      <div class="cmp-pair">${Object.entries(SHIPS).map(([id, S]) => `<figure><canvas data-fig="cmp-${n}-${id}"></canvas><figcaption><b class="${id}">${S.name}</b>${S.fx[S.labels[n] || n]}</figcaption></figure>`).join('')}</div></div>`).join('')}</div>`
+  },
 ];
 function showTutorial(page, from){
   tutFrom = from; page = Math.max(0, Math.min(TUT_PAGES.length - 1, page));
@@ -1970,8 +2000,40 @@ function drawFig(el, kind){
   el.width = Math.round(w * dpr); el.height = Math.round(h * dpr);
   const c = el.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0);
   const old = ctx; ctx = c;
-  try { ctx.fillStyle = C.sea; ctx.fillRect(0, 0, w, h); (FIGS[kind] || FIGS_EXTRA[kind] || (() => {}))(w, h); } finally { ctx = old; }
+  try { ctx.fillStyle = C.sea; ctx.fillRect(0, 0, w, h); (FIGS[kind] || FIGS_EXTRA[kind] || (kind.startsWith('cmp-') && CMP_FIGS[kind.split('-')[1]] && CMP_FIGS[kind.split('-')[1]][kind.split('-')[2]]) || (() => {}))(w, h); } finally { ctx = old; }
 }
+const LSHOT = '#ffd27a';
+const lshot = (x, y, a = 0) => { ctx.strokeStyle = LSHOT; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - Math.cos(a) * 9, y - Math.sin(a) * 9); ctx.stroke(); };
+const lmis = (x, y) => { ctx.fillStyle = C.sun; ctx.beginPath(); ctx.moveTo(x + 5, y); ctx.lineTo(x - 4, y - 3); ctx.lineTo(x - 4, y + 3); ctx.fill(); };
+const dash = (pts, col) => { ctx.strokeStyle = col; ctx.setLineDash([3, 4]); ctx.lineWidth = 1.2; ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.stroke(); ctx.setLineDash([]); };
+const CMP_FIGS = {
+  SPEED:{
+    leaf(w, h){ const y = h / 2; for (let i = 0; i < 4; i++){ ctx.fillStyle = C.leaf; ctx.globalAlpha = .35 + i * .18; ctx.fillRect(w * .5 + i * 11, h - 14 - i * 5, 8, 6 + i * 5); } ctx.globalAlpha = 1; drawLeaf(w * .25, y, 1, false); fx.label(w * .62, 14, '4段階', C.sun); },
+    lance(w, h){ const y = h / 2; for (let i = 0; i < 3; i++){ ctx.fillStyle = LSHOT; ctx.globalAlpha = .35 + i * .25; ctx.fillRect(w * .5 + i * 15, h - 14 - i * 8, 12, 6 + i * 8); } ctx.globalAlpha = 1; drawLance(w * .25, y, 1, false); fx.label(w * .62, 14, '3段階', C.sun); } },
+  MISSILE:{
+    leaf(w, h){ const fy = h - 8; fx.ground(w, fy, false); drawLeaf(26, 20, 1, false); for (const o of [0, 26]){ dash([[30 + o, 26], [44 + o, fy - 6], [w - 10, fy - 6]], C.sun); lmis(w - 30 - o, fy - 6); } },
+    lance(w, h){ const fy = h - 8; fx.ground(w, fy, false); fx.ground(w, 8, true); const y = h / 2; drawLance(26, y, 1, false);
+      dash([[30, y + 4], [50, fy - 6], [w - 10, fy - 6]], C.sun); dash([[30, y - 4], [50, 14], [w - 10, 14]], C.sun); lmis(w - 30, fy - 6); lmis(w - 30, 14); } },
+  TWIN:{
+    leaf(w, h){ const y = h - 18; drawLeaf(26, y, 1, false); for (let i = 1; i <= 4; i++){ fx.shot(36 + i * 22, y); fx.shot(36 + i * 13, y - i * 13, -Math.PI / 4); } },
+    lance(w, h){ const y = h / 2; drawLance(26, y, 1, false); for (let i = 1; i <= 3; i++){ lshot(40 + i * 30, y); lshot(36 + i * 30, y - 11 - i * 4.3, -.14); lshot(36 + i * 30, y + 11 + i * 4.3, .14); } } },
+  BEAM:{
+    leaf(w, h){ const y = h / 2; drawLeaf(22, y, 1, false); [.45, .62, .79].forEach((k, i) => drawEnemy({ kind:'fan', x:w * k, y, t:i * .4 })); ctx.strokeStyle = C.leaf; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(40, y); ctx.lineTo(w - 6, y); ctx.stroke(); ctx.strokeStyle = C['leaf-hi']; ctx.lineWidth = 1; ctx.stroke(); fx.label(w * .62, y - 14, 'つらぬく', C.leaf); },
+    lance(w, h){ const y = h / 2; drawLance(22, y, 1, false); [.45, .62, .79].forEach((k, i) => drawEnemy({ kind:'fan', x:w * k, y, t:i * .4 })); ctx.strokeStyle = '#ff5a3a'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(44, y); ctx.lineTo(w * .45 - 8, y); ctx.stroke(); ctx.strokeStyle = '#fff2d8'; ctx.lineWidth = 1.3; ctx.stroke(); fx.label(w * .45, y - 14, '×2', '#ff7a4a'); } },
+  DRONE:{
+    leaf(w, h){ const pts = [[w * .62, h / 2 - 8], [w * .42, h / 2 + 10], [w * .22, h / 2 - 4]]; dash([pts[2], pts[1], pts[0]], 'rgba(92,200,255,.5)'); drawLeaf(pts[0][0], pts[0][1], 1, false);
+      [pts[1], pts[2]].forEach(([x, y]) => { ctx.fillStyle = C['leaf-hi']; ctx.beginPath(); ctx.arc(x, y, 4, 0, 6.283); ctx.fill(); ctx.strokeStyle = C.leaf; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(x, y, 7, 0, 6.283); ctx.stroke(); }); fx.label(w * .32, h - 4, 'ついてくる', C.leaf); },
+    lance(w, h){ const x = w * .4, y = h / 2; drawLance(x, y, 1, false); for (const d of [-1, 1]){ const oy = y + d * 26, ox = x - 8; ctx.fillStyle = '#e3e7ec'; ctx.beginPath(); ctx.moveTo(ox + 9, oy); ctx.lineTo(ox - 6, oy - 3.5); ctx.lineTo(ox - 6, oy + 3.5); ctx.closePath(); ctx.fill(); ctx.fillStyle = '#f0a030'; ctx.fillRect(ox + 3, oy - 1, 4, 2); lshot(ox + 34, oy); }
+      lshot(x + 40, y); fx.label(w * .8, h - 6, '上下に並ぶ', LSHOT); } },
+  SNIPER:{
+    leaf(w, h){ const x = w * .25, y = h / 2; drawLeaf(x, y, 1, false); const tg = { x:w * .82, y:14 }; drawEnemy({ kind:'fan', x:tg.x, y:tg.y, t:.3 }); for (let i = 1; i <= 3; i++){ const k = i / 4; fx.shot(x + (tg.x - x) * k, y - 20 + (tg.y - y + 20) * k, Math.atan2(tg.y - y + 20, tg.x - x)); } fx.label(w * .55, h - 4, '速い弾', C.leaf); },
+    lance(w, h){ const x = w * .25, y = h / 2; drawLance(x, y, 1, false); const tg = { x:w * .82, y:14 }; drawEnemy({ kind:'fan', x:tg.x, y:tg.y, t:.3 }); const a = Math.atan2(tg.y - y + 20, tg.x - x), mx = x + (tg.x - x) * .55, my = y - 20 + (tg.y - y + 20) * .55;
+      ctx.strokeStyle = '#ff7a4a'; ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(mx, my); ctx.lineTo(mx - Math.cos(a) * 12, my - Math.sin(a) * 12); ctx.stroke(); ctx.lineCap = 'butt'; fx.label(w * .55, h - 4, '重い弾 ×2', '#ff7a4a'); } },
+  SHIELD:{
+    leaf(w, h){ const x = w * .35, y = h / 2; drawLeaf(x, y, 1, false); ctx.strokeStyle = C.leaf; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(x + 2, y, 18, -1.15, 1.15); ctx.stroke(); fx.bullet(x + 28, y - 4); fx.label(w * .75, y + 4, '4回', C.sun); },
+    lance(w, h){ const x = w * .35, y = h / 2; drawLance(x, y, 1, false); ctx.strokeStyle = '#ffd27a'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 22, 0, 6.283); ctx.stroke(); ctx.globalAlpha = .5; ctx.beginPath(); ctx.arc(x, y, 32, 0, 6.283); ctx.stroke(); ctx.globalAlpha = 1;
+      for (const [dx, dy] of [[40, -14], [44, 10], [-34, 12]]){ ctx.fillStyle = '#ffd27a'; ctx.globalAlpha = .6; ctx.fillRect(x + dx - 1, y + dy - 1, 3, 3); } ctx.globalAlpha = 1; fx.label(w * .78, y + 4, '3回＋弾消し', C.sun); } }
+};
 const FIGS_EXTRA = {
   'ship-leaf'(w, h){ const y = h / 2; drawLeaf(w * .3, y, 1.5, false); for (let i = 1; i <= 3; i++){ fx.shot(w * .3 + 24 + i * 22, y); } },
   'ship-lance'(w, h){ const y = h / 2; drawLance(w * .3, y, 1.5, false); ctx.strokeStyle = '#ffd27a'; ctx.lineWidth = 2; for (let i = 1; i <= 3; i++){ ctx.beginPath(); ctx.moveTo(w * .3 + 24 + i * 22, y); ctx.lineTo(w * .3 + 15 + i * 22, y); ctx.stroke(); } }
