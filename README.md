@@ -8,7 +8,7 @@
 |---|---|
 | `index.html` | ゲーム本体（HTML / CSS / JavaScript を1ファイルに収録） |
 | `config.js` | ランキング用 Supabase の接続先（Project URL と publishable キー） |
-| `music/` | BGM（SUNO Pro プランで生成。商用利用可） |
+| `music/` | BGM（SUNO Pro プランで生成。商用利用可）。title / stage（1・2面）/ stage3〜5 / boss / clear / over |
 | `manifest.webmanifest`, `icon.svg` | ホーム画面に追加したときのアプリ名とアイコン |
 | `supabase/schema.sql` | ランキング用テーブルと登録用関数。Supabase の SQL Editor で実行する |
 

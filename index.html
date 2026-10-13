@@ -259,7 +259,10 @@ function noise(dur, vol=.12){
 /* BGM: one <audio> element for every track, so phones that unlock it on the first tap keep allowing track changes */
 const TRACKS = {
   title: { src:'music/title.mp3', loop:[0, 181],   vol:.45 },
-  stage: { src:'music/stage.mp3', loop:[2, 155.5], vol:.4 },
+  stage: { src:'music/stage.mp3', loop:[2, 155.5], vol:.4 },   // stages 1-2
+  stage3:{ src:'music/stage3.mp3', loop:[3, 180], vol:.4 },    // Sunken Hull
+  stage4:{ src:'music/stage4.mp3', loop:[5.5, 187.5], vol:.4 }, // Vent Pressure
+  stage5:{ src:'music/stage5.mp3', loop:[2.5, 177.5], vol:.4 }, // Abyss Throne
   boss:  { src:'music/boss.mp3',  loop:[0, 106.5], vol:.45 },
   clear: { src:'music/clear.mp3', vol:.6 },
   over:  { src:'music/over.mp3',  vol:.6 }
@@ -272,6 +275,7 @@ function playTrack(name){
   curTrack = name; bgm.src = tr.src; bgm.loop = false; bgm.volume = tr.vol; bgm.muted = muted;
   const p = bgm.play(); if (p) p.catch(() => {});
 }
+const stageTrack = () => (G && TRACKS['stage' + G.stage]) ? 'stage' + G.stage : 'stage';
 function stopTrack(){ bgm.pause(); curTrack = null; }
 function resumeTrack(){ if (curTrack && bgm.paused){ const p = bgm.play(); if (p) p.catch(() => {}); } }
 function tickMusic(){
@@ -433,7 +437,7 @@ function buildScript(stage){
   return ev;
 }
 function newGame(mode = 'main'){
-  initAudio(); audioUnlocked = true; playTrack('stage');
+  initAudio(); audioUnlocked = true; playTrack(stageTrack());
   const mcfg = mode === 'monthly' ? monthlyNow() : null;
   G = { state:'play', ship:shipId, items:itemMode, mode:mcfg ? 'monthly' : 'main', mcfg, stage:mcfg ? mcfg.base : 1, score:0, lives:mcfg ? mcfg.lives : 2, paused:false, p:null, hinted:false };
   resetStage(); spawnPlayer(); hideOverlay();
@@ -449,7 +453,7 @@ function resetStage(){
 function nextStage(){
   G.stage++; const p = G.p; resetStage();
   if (p){ p.x = 70; p.y = H / 2; p.hist = []; p.inv = 2; G.p = p; } else spawnPlayer();
-  playTrack('stage'); hideOverlay(); updatePanel();
+  playTrack(stageTrack()); hideOverlay(); updatePanel();
 }
 function spawnPlayer(){ G.p = { ship:G.ship, x:70, y:H / 2, spd:0, missile:false, weapon:'n', opts:0, snipers:0, shield:0, inv:2, hist:[] }; updatePanel(); }
 const clampP = () => { const p = G.p; p.x = Math.max(12, Math.min(W - 20, p.x)); p.y = Math.max(8, Math.min(H - 8, p.y)); };
