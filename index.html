@@ -64,6 +64,11 @@ canvas{display:block;border-radius:6px;outline:1px solid var(--line)}
 @media (max-width:520px){.cell .l{display:none}.cell .s{display:inline}#power{width:84px}}
 .mode{display:flex;flex-direction:column;gap:6px}
 .ships{display:flex;flex-direction:column;gap:6px}
+.result{display:flex;gap:14px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:rgba(10,36,51,.6)}
+.result .grade{font:700 40px var(--f-display);width:56px;height:56px;display:grid;place-items:center;border-radius:10px;border:2px solid currentColor}
+.result .gS{color:var(--sun)}.result .gA{color:var(--leaf)}.result .gB{color:var(--ink)}.result .gC{color:var(--mute)}
+.result small{display:block;font:500 11px var(--f-mono);color:var(--mute);letter-spacing:.08em}.result b{font:700 26px var(--f-mono)}.result b span{font-size:13px;margin-left:2px}
+.result p{margin:2px 0 0;font-size:12px;color:var(--mute)}.result em{color:var(--sun);font-style:normal;font-weight:700}
 .ship-cards{display:grid;grid-template-columns:1fr 1fr;gap:8px;max-width:520px}
 .ship-card{display:flex;flex-direction:column;gap:4px;text-align:left;padding:8px;border-radius:10px;border:1px solid var(--line);background:rgba(10,36,51,.6);color:var(--ink);cursor:pointer;font:inherit}
 .ship-card[aria-pressed="true"]{border-color:var(--sun);box-shadow:0 0 0 2px var(--sun) inset}
@@ -638,11 +643,14 @@ function spawn(type){
     G.wells.push({ x:W + 70, y:H / 2 + (Math.random() < .5 ? -1 : 1) * (30 + Math.random() * 50), t:0 });
   } else if (type === 'boss'){
     playTrack('boss');
+    G.bossT0 = G.t; G.bossHits = 0;
+    if (!G.mcfg && !G.practice && G.p) G.snap = { stage:G.stage, ship:G.ship, items:G.items, p:{ spd:G.p.spd, missile:G.p.missile, weapon:G.p.weapon, opts:G.p.opts, snipers:G.p.snipers, shield:G.p.shield } };
     if (G.mcfg){ G.boss = makeBoss(G.mcfg.boss, false); G.boss.tint = G.mcfg.tint; G.bossBanner = 2.6; return; }
     if (G.stage === 5){ G.rush = ['core','jelly','fort','worm','king']; G.rushN = 0; nextRush(); return; }
     G.boss = makeBoss(['core','jelly','fort','worm'][G.stage - 1], false);
     // STAGE 1 (the free part) has a gentler boss: half the toughness of the other stages' rule (2x the original)
     if (G.stage === 1){ const b = G.boss; b.hp = Math.ceil(b.hp / 2); if (b.plates) b.plates = b.plates.map(v => Math.ceil(v / 2)); }
+    if (G.stage === 2) Object.assign(G.boss, { gate:true, hp:150, hp0:150, form:1, cd:1.4 }); // THE GATEKEEPER
     G.bossBanner = 2.6;
   }
 }
@@ -734,14 +742,15 @@ function sniperTarget(s){
   if (b && !b.dead && b.x < W){ const t = bossWeakPoint(b); const d = d2(s, t); if (d < bd){ bd = d; best = t; } }
   return best;
 }
+const inBoss = () => G && G.boss && !G.bossDead && G.bossT0 != null;
 function killPlayer(){
-  const p = G.p; burst(p.x, p.y, C.leaf, 40, 1.4); sfx.die(); G.shake = .5;
+  const p = G.p; burst(p.x, p.y, C.leaf, 40, 1.4); sfx.die(); G.shake = .5; if (inBoss()) G.bossHits++;
   G.p = null; G.gauge = -1; G.respawn = 1.6; updatePanel();
 }
 function hurtPlayer(){
   const p = G.p; if (!p || p.inv > 0) return;
   if (p.shield > 0){
-    p.shield--; p.inv = .6; sfx.hit(); updatePanel();
+    p.shield--; p.inv = .6; sfx.hit(); updatePanel(); if (inBoss()) G.bossHits++;
     if (p.ship === 'lance'){ for (const b of G.eb) if (d2(b, p) < 70 * 70){ b.dead = true; burst(b.x, b.y, '#ffd27a', 3, .4); } G.shake = .2; G.ring = { x:p.x, y:p.y, at:performance.now() }; }
     return;
   }
@@ -763,6 +772,7 @@ function updatePlayer(dt){
   if (!last || Math.abs(last.x - p.x) + Math.abs(last.y - p.y) > 1){ p.hist.push({ x:p.x, y:p.y }); if (p.hist.length > 40) p.hist.shift(); }
   fire(dt);
   const wx = p.x + G.scroll, cy = ceilY(wx), fy = floorY(wx);
+  if (p.inv <= 0 && G.boss && G.boss.gate && zapLive(G.boss) && Math.abs(p.y - G.boss.zap.y) < 8 && p.x < G.boss.x - 40){ killPlayer(); return; }
   if (p.inv <= 0) for (const g of G.gates){ if (gateOn(g) && Math.abs(p.x - g.x) < 9 && g.x < W){ killPlayer(); return; } }
   if (p.inv <= 0) for (const v of G.vents){ const c = ventColumn(v); if (c && Math.abs(p.x - v.x) < 13 && p.y > c.y0 - 4 && p.y < c.y1 + 4){ killPlayer(); return; } }
   for (const k of G.blocks){
@@ -788,7 +798,7 @@ function updateBoss(dt){
   if (b.life0 == null) b.life0 = bossLife(b) || 1;
   const left = bossLife(b) / b.life0, stage = left < .25 ? 2 : left < .5 ? 1 : 0;
   if (stage > (b.anger || 0)){ b.anger = stage; G.shake = .4; floatText(b.x - 30, b.y - 40, stage === 2 ? 'RAGE!!' : 'ANGER!', C.coral); sfx.die(); }
-  dt *= 1 + .8 * (1 - left);
+  dt *= 1 + (b.gate ? .3 : .8) * (1 - left);
   if (b.type === 'jelly') return updateJelly(b, dt);
   if (b.type === 'worm') return updateWorm(b, dt);
   if (b.type === 'king') return updateKing(b, dt);
@@ -1025,7 +1035,19 @@ function damageBoss(b, s, dmg){
 }
 
 /* ---------- boss 2: 深淵クラゲ (pulsing jellyfish; the nucleus is only exposed while the bell is open) ---------- */
-const jellyOpen = b => (b.t % 4) > 2.5;
+const jellyCyc = b => b.form === 2 ? 3.2 : 4;
+const jellyOpen = b => b.form === 3 || (b.t % jellyCyc(b)) > jellyCyc(b) - 1.5;
+const jellySinceOpen = b => (b.t % jellyCyc(b)) - (jellyCyc(b) - 1.5);       // seconds since the bell opened
+const jellyInhale = b => b.gate && b.form < 3 && !jellyOpen(b) && (b.t % jellyCyc(b)) > jellyCyc(b) - 2.1; // 0.6 s tell before it opens
+/* THE GATEKEEPER (STAGE 2 of the main game): three forms.
+   I   bell pulses open and shut; while shut, tentacles throw bullets that curve back in.
+   II  electric membranes sweep across the screen (dotted warning, then a live band); the bell cycles faster.
+   III the bell shatters: the core is always exposed, it lunges up and down and spins out a spiral.
+   Not told anywhere: the core takes 5x damage in the first moment after the bell opens (it is still inhaling). */
+function gateForm(b){
+  const left = b.hp / b.hp0, f = left > .66 ? 1 : left > .33 ? 2 : 3;
+  if (f !== b.form){ b.form = f; b.guard = 1.2; b.zap = null; G.eb.length = 0; G.shake = .8; sfx.boss(); floatText(b.x - 40, b.y - 50, f === 2 ? 'FORM II' : 'FORM III', C.coral, 1.6, 16); }
+}
 function tentaclePts(b){
   const pts = [], open = jellyOpen(b);
   for (let i = 0; i < 5; i++){
@@ -1035,6 +1057,7 @@ function tentaclePts(b){
   return pts;
 }
 function updateJelly(b, dt){
+  if (b.gate) return updateGate(b, dt);
   b.t += dt; b.x += (W - 130 - b.x) * Math.min(1, dt * 1.1); b.y = H / 2 + 70 * Math.sin(b.t * .6);
   b.flash = Math.max(0, b.flash - dt);
   if (b.x > W - 50) return;
@@ -1043,10 +1066,40 @@ function updateJelly(b, dt){
   b.wasOpen = open;
   if (!open){ b.cd -= dt; if (b.cd <= 0){ b.cd = 1.6; aim(b.x - 30, b.y, 160); aim(b.x - 30, b.y + 12, 140); } }
 }
+function updateGate(b, dt){
+  b.t += dt; b.flash = Math.max(0, b.flash - dt); b.guard = Math.max(0, (b.guard || 0) - dt);
+  const f = b.form || 1;
+  b.x += (W - 130 - b.x) * Math.min(1, dt * 1.1);
+  b.y = f === 3 ? H / 2 + 100 * Math.sin(b.t * 1.5) * Math.cos(b.t * .4) : H / 2 + 75 * Math.sin(b.t * (f === 2 ? .8 : .6));
+  if (b.x > W - 50) return;
+  gateForm(b);
+  if (b.guard > 0) return;
+  const open = jellyOpen(b);
+  if (f < 3){
+    if (open && !b.wasOpen){ for (let k = 0; k < 14; k++){ const a = k / 14 * 6.283 + b.t; G.eb.push({ x:b.x - 4, y:b.y + 6, vx:Math.cos(a) * 115, vy:Math.sin(a) * 115 }); } }
+    if (!open){ b.cd -= dt; if (b.cd <= 0){ b.cd = f === 2 ? 1.1 : 1.4;
+      // tentacles fling bullets that curve back toward the middle
+      for (let i = 0; i < 5; i++){ const tx = b.x - 28 + i * 14, d = i < 2 ? -1 : i > 2 ? 1 : 0; G.eb.push({ x:tx, y:b.y + 60, vx:-120, vy:d * 70 + 30, turn:-d * 1.1 || .0 }); }
+      aim(b.x - 30, b.y, 150); } }
+  }
+  b.wasOpen = open;
+  if (f === 2){
+    // electric membrane: a horizontal band across the screen, 0.9 s dotted warning then 0.8 s live
+    if (!b.zap){ b.zcd = (b.zcd || 1.2) - dt; if (b.zcd <= 0){ const lo = 40, hi = H - 40, py = G.p ? G.p.y : H / 2; b.zap = { y:Math.max(lo, Math.min(hi, py + (Math.random() - .5) * 60)), t:0 }; b.zcd = 1.6; } }
+    else { b.zap.t += dt; if (b.zap.t > 1.7) b.zap = null; }
+  }
+  if (f === 3){
+    b.sp = (b.sp || 0) - dt; if (b.sp <= 0){ b.sp = .11; b.sa = (b.sa || 0) + .55; for (const o of [0, Math.PI]) G.eb.push({ x:b.x - 4, y:b.y + 6, vx:Math.cos(b.sa + o) * 120, vy:Math.sin(b.sa + o) * 120 }); }
+    b.cd -= dt; if (b.cd <= 0){ b.cd = 1.5; for (let k = -1; k <= 1; k++) aim(b.x - 20, b.y + k * 18, 170); }
+  }
+}
+const zapLive = b => b && b.zap && b.zap.t > .9;
 function shotVsJelly(b, s){
   const open = jellyOpen(b), nx = b.x - 4, ny = b.y + 6;
+  if (b.gate && b.guard > 0){ if (d2(s, { x:nx, y:ny }) < 50 * 50) s.dead = true; return; }
   if (open){
     const hit = s.k === 'b' ? Math.abs(s.y - ny) < 12 && s.x >= nx - 11 && s.x - s.len <= nx + 11 : d2(s, { x:nx, y:ny }) < 13 * 13;
+    if (hit && b.gate && b.form < 3 && jellySinceOpen(b) < .45){ floatText(nx, ny - 22, 'CRITICAL ×5', C.sun, .6, 12); b.flash = .12; return damageBoss(b, s, dmgOf(s) * 5); }
     if (hit) return damageBoss(b, s, dmgOf(s));
     if (Math.abs(s.y - ny) < 13) return; // the raised bell leaves a clear path to the nucleus
   }
@@ -1054,7 +1107,20 @@ function shotVsJelly(b, s){
   if (((s.x - b.x) / 44) ** 2 + ((s.y - by) / (open ? 28 : 34)) ** 2 < 1){ s.dead = true; if (!open) b.flash = .03; }
 }
 function drawJelly(b){
-  const open = jellyOpen(b), lift = open ? 16 : 0, pulse = 1 + .05 * Math.sin(b.t * 6);
+  const open = jellyOpen(b), lift = open ? 16 : 0, inhale = jellyInhale(b), pulse = inhale ? .9 + .03 * Math.sin(b.t * 30) : 1 + .05 * Math.sin(b.t * 6);
+  if (b.gate && b.zap){ // electric membrane
+    const z = b.zap, live = z.t > .9, x1 = b.x - 40;
+    if (!live){ ctx.strokeStyle = '#7fe0ff'; ctx.globalAlpha = .35 + .3 * Math.abs(Math.sin(z.t * 25)); ctx.setLineDash([5, 6]); ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(0, z.y); ctx.lineTo(x1, z.y); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1; }
+    else { ctx.strokeStyle = 'rgba(127,224,255,.35)'; ctx.lineWidth = 12; ctx.beginPath(); ctx.moveTo(0, z.y); ctx.lineTo(x1, z.y); ctx.stroke();
+      ctx.strokeStyle = '#eaffff'; ctx.lineWidth = 2; ctx.beginPath(); for (let x = 0; x <= x1; x += 12) ctx.lineTo(x, z.y + (Math.random() - .5) * 8); ctx.stroke(); }
+  }
+  if (inhale){ ctx.strokeStyle = 'rgba(200,180,255,.5)'; ctx.lineWidth = 1; for (let k = 0; k < 6; k++){ const a = k / 6 * 6.283 + b.t * 4, r = 50 - (b.t * 80 % 30); ctx.beginPath(); ctx.moveTo(b.x - 4 + Math.cos(a) * r, b.y + 6 + Math.sin(a) * r); ctx.lineTo(b.x - 4 + Math.cos(a) * (r - 10), b.y + 6 + Math.sin(a) * (r - 10)); ctx.stroke(); } }
+  if (b.gate && b.form === 3){ // shattered bell: shards orbit an exposed, swollen core
+    ctx.fillStyle = 'rgba(160,120,230,.5)'; for (let k = 0; k < 6; k++){ const a = k / 6 * 6.283 + b.t * 1.2; ctx.save(); ctx.translate(b.x - 4 + Math.cos(a) * 40, b.y + 6 + Math.sin(a) * 30); ctx.rotate(a); ctx.beginPath(); ctx.moveTo(-8, -3); ctx.lineTo(8, 0); ctx.lineTo(-8, 3); ctx.closePath(); ctx.fill(); ctx.restore(); }
+    const g = ctx.createRadialGradient(b.x - 4, b.y + 6, 2, b.x - 4, b.y + 6, 22); g.addColorStop(0, b.flash > 0 ? '#fff' : '#ffd0c8'); g.addColorStop(1, 'rgba(255,90,70,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(b.x - 4, b.y + 6, 22, 0, 6.283); ctx.fill(); ctx.fillStyle = b.flash > 0 ? C.ink : C.coral; ctx.beginPath(); ctx.arc(b.x - 4, b.y + 6, 11, 0, 6.283); ctx.fill();
+    return;
+  }
   ctx.save();
   // tentacles
   const tn = b.tint || {};
@@ -1139,6 +1205,23 @@ function killBoss(){
     G.score += 5000; floatText(W / 2, H / 2 - 20, `BOSS ${G.rushN} / 4  +5000`, C.sun, 2, 16); G.nextBossT = 2.6; return;
   }
   stopTrack(); G.bossDead = true; G.clearT = b.type === 'king' ? 4 : 2.8; G.score += b.type === 'king' ? 30000 : 10000;
+  if (G.bossT0 != null) G.result = bossResult(G.t - G.bossT0, G.bossHits);
+}
+
+/* boss result: time, hits taken, grade, and this device's best time per stage and ship */
+const PAR = { 1:25, 2:60, 3:55, 4:55, 5:200 };
+function bossResult(time, hits){
+  const par = PAR[G.stage] || 60;
+  const grade = hits === 0 && time <= par ? 'S' : hits <= 1 && time <= par * 1.5 ? 'A' : hits <= 3 ? 'B' : 'C';
+  const key = `bls_bt_${G.mcfg ? G.mcfg.key : G.stage}_${G.ship}`, prev = Number(store.get(key)) || 0, best = !prev || time < prev;
+  if (best && !G.practice) store.set(key, time.toFixed(1));
+  if (!G.practice && grade === 'S') G.score += 5000;
+  return { time, hits, grade, best:best && !G.practice, prev };
+}
+function resultBlock(r){
+  if (!r) return '';
+  return `<div class="result"><div class="grade g${r.grade}">${r.grade}</div><div><small>BOSS 撃破タイム</small><b>${r.time.toFixed(1)}<span>秒</span></b>
+    <p>被弾 ${r.hits} 回${r.best ? ' ・ <em>自己ベスト！</em>' : r.prev ? ` ・ 自己ベスト ${r.prev.toFixed(1)}秒` : ''}${G.practice ? ' ・ 練習' : ''}${r.grade === 'S' && !G.practice ? ' ・ ノーミス速攻ボーナス +5,000' : ''}</p></div></div>`;
 }
 
 /* ---------- main update ---------- */
@@ -1228,7 +1311,7 @@ function update(dt){
   }
 
   const bk = bulletK();
-  for (const b of G.eb){ b.x += b.vx * dt * bk; b.y += b.vy * dt * bk; if (b.x < -10 || b.x > W + 10 || b.y < -10 || b.y > H + 10) b.dead = true; }
+  for (const b of G.eb){ if (b.turn){ const c = Math.cos(b.turn * dt), sn = Math.sin(b.turn * dt), vx = b.vx; b.vx = vx * c - b.vy * sn; b.vy = vx * sn + b.vy * c; } b.x += b.vx * dt * bk; b.y += b.vy * dt * bk; if (b.x < -10 || b.x > W + 10 || b.y < -10 || b.y > H + 10) b.dead = true; }
   for (const c of G.caps){ c.t += dt; c.x -= 50 * dt; if (c.x < -20) c.dead = true; }
 
   const p = G.p;
@@ -1743,6 +1826,7 @@ function draw(){
     ctx.font = '700 12px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-mono'); ctx.textAlign = 'left'; ctx.fillText('!', 20, warn.y + 4);
   }
   if (G.boss) drawBoss(G.boss);
+  if (G.boss && !G.bossDead && G.bossT0 != null){ ctx.font = '600 12px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-mono'); ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(255,255,255,.75)'; ctx.fillText(`BOSS ${(G.t - G.bossT0).toFixed(1)}s${G.practice ? '  PRACTICE' : ''}`, W / 2, H - 10); }
   if (G.ring){ const k = (performance.now() - G.ring.at) / 350; if (k > 1) G.ring = null; else { ctx.strokeStyle = '#ffd27a'; ctx.globalAlpha = 1 - k; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(G.ring.x, G.ring.y, 20 + k * 70, 0, 6.283); ctx.stroke(); ctx.globalAlpha = 1; } }
   for (const s of G.shots){
     const lanceShot = G.ship === 'lance';
@@ -1795,7 +1879,7 @@ function draw(){
     ctx.fillStyle = C.coral; ctx.font = '700 14px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-mono');
     ctx.fillText(G.boss.type === 'king' ? 'FINAL WARNING' : 'WARNING', W / 2, 54);
     ctx.fillStyle = C.ink; ctx.font = '700 18px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-body');
-    ctx.fillText('ボス「' + ((G.mcfg && G.mcfg.bossName) || BOSS_NAME[G.boss.type]) + '」', W / 2, 76); ctx.globalAlpha = 1;
+    ctx.fillText((G.boss.gate ? '門番「' : 'ボス「') + ((G.mcfg && G.mcfg.bossName) || BOSS_NAME[G.boss.type]) + '」', W / 2, 76); ctx.globalAlpha = 1;
   }
   if (G.hint > 0){
     ctx.globalAlpha = Math.min(1, G.hint / .5);
@@ -1900,6 +1984,7 @@ function renderBoards(){
   if (top){ tw.hidden = false; $('#top').textContent = `${top.name} ${top.score.toLocaleString()}`; } else tw.hidden = true;
 }
 function entryBlock(score){
+  if (G && G.practice) return '';
   if (!RANK_ON || score <= 0) return '';
   if (G && G.mcfg && G.mcfg.preview) return `<p class="board-note">プレビュー中のステージなので、ランキングには登録されません。</p>`;
   const monthly = curMode() !== 'main';
@@ -1940,6 +2025,7 @@ overlay.addEventListener('click', e => {
   if (a.dataset.act === 'monthly'){ if (!store.get('bls_tut_seen')){ pendingMode = 'monthly'; G = null; showTutorial(0, 'first'); return; } newGame('monthly'); }
   if (a.dataset.act === 'resume') togglePause();
   if (a.dataset.act === 'next') nextStage();
+  if (a.dataset.act === 'practice') startPractice();
   if (a.dataset.act === 'mode') setMode(a.dataset.mode);
   if (a.dataset.act === 'ship') setShip(a.dataset.ship);
   if (a.dataset.act === 'period' && typeof setPeriod === 'function') setPeriod(a.dataset.p);
@@ -1992,13 +2078,34 @@ function endScores(){
 function gameOver(){
   playTrack('over');
   G.state = 'over'; updatePanel();
-  showOverlay(`<div class="eyebrow">Game over</div><h2 class="big">また挑戦しよう</h2>${endScores()}${entryBlock(G.score)}
-    <div class="row"><button class="btn" type="button" data-act="start">もう一度</button><button class="btn ghost" type="button" data-act="title">タイトルへ</button></div>${boardBlock}${studioBlock}`);
+  if (G.practice){
+    showOverlay(`<div class="eyebrow">Practice</div><h2 class="big">あと少し</h2><p class="lead">STAGE ${G.stage} のボス戦の練習中です（ランキング対象外）。</p>
+      <div class="row"><button class="btn" type="button" data-act="practice">もう一度ボス戦</button><button class="btn ghost" type="button" data-act="title">タイトルへ</button></div>`);
+    return;
+  }
+  const atBoss = G.boss && !G.bossDead;
+  showOverlay(`<div class="eyebrow">Game over</div><h2 class="big">${atBoss && G.boss.gate ? '門番に阻まれた' : 'また挑戦しよう'}</h2>${endScores()}${entryBlock(G.score)}
+    <div class="row"><button class="btn" type="button" data-act="start">もう一度</button>${atBoss ? practiceBtn() : ''}<button class="btn ghost" type="button" data-act="title">タイトルへ</button></div>
+    ${atBoss ? '<p class="board-note">「ボス戦から練習」は、このボスの直前の強化状態からすぐ始められます（ランキング対象外）。</p>' : ''}${boardBlock}${studioBlock}`);
   fillNick();
 }
+function startPractice(){
+  const sn = G && G.snap; if (!sn) return;
+  initAudio(); audioUnlocked = true;
+  G = { state:'play', ship:sn.ship, items:sn.items, mode:'main', mcfg:null, stage:sn.stage, score:0, lives:2, paused:false, p:null, hinted:false, practice:true, snap:sn };
+  resetStage(); G.script = [{ t:2.4, type:'boss' }]; spawnPlayer(); Object.assign(G.p, sn.p); G.banner = 0;
+  hideOverlay(); updatePanel(); playTrack(stageTrack());
+}
+const practiceBtn = () => G && G.snap ? `<button class="btn ghost" type="button" data-act="practice">ボス戦から練習</button>` : '';
 function stageClear(){
   playTrack('clear');
   G.state = 'clear'; const bonus = G.lives * 1000; G.score += bonus; updatePanel();
+  if (G.practice){
+    showOverlay(`<div class="eyebrow">Practice clear</div><h2 class="big">STAGE ${G.stage} のボスを撃破！</h2>${resultBlock(G.result)}
+      <p class="board-note">練習モードはランキングに登録されません。本番で同じ動きを決めよう。</p>
+      <div class="row"><button class="btn" type="button" data-act="practice">もう一度ボス戦</button><button class="btn ghost" type="button" data-act="title">タイトルへ</button></div>`);
+    return;
+  }
   if (G.mode === 'monthly'){
     showOverlay(`<div class="eyebrow">Monthly stage clear</div><h2 class="big">${G.mcfg.short} クリア！</h2>${endScores()}
       ${entryBlock(G.score)}
@@ -2007,13 +2114,15 @@ function stageClear(){
   }
   if (G.stage < LAST_STAGE){
     const n = G.stage + 1, NEXT_NOTE = { 2:'新アイテム SNIPER が登場します。', 3:'撃って壊せる壁と、後ろから来る敵が登場します。', 4:'一定の間隔で熱水を噴き上げる噴出孔と、飛び散る火山弾が登場します。', 5:'これまでのボス4体との連戦のあと、最後の敵が待っています。' };
-    showOverlay(`<div class="eyebrow">Stage ${G.stage} clear</div><h2 class="big">コアを撃破！</h2>
+    const BEAT = { core:'コアを撃破！', jelly:G.boss && G.boss.gate ? '門番を突破！' : '深淵クラゲを撃破！', fort:'幽霊戦艦を撃破！', worm:'ヒートワームを撃破！' };
+    showOverlay(`<div class="eyebrow">Stage ${G.stage} clear</div><h2 class="big">${BEAT[G.boss && G.boss.type] || 'ボスを撃破！'}</h2>
+      ${resultBlock(G.result)}
       <div class="score"><div><small>SCORE</small><b>${G.score.toLocaleString()}</b></div><div><small>残機ボーナス</small><b>+${bonus.toLocaleString()}</b></div></div>
       <p class="lead">次は STAGE ${n}「${STAGES[n].name}」。強化と残機はそのまま引き継ぎます。${NEXT_NOTE[n] || ''}</p>
       <div class="row"><button class="btn" type="button" data-act="next">STAGE ${n} へ</button><button class="btn ghost" type="button" data-act="title">タイトルへ</button></div>`);
     return;
   }
-  showOverlay(`<div class="eyebrow">All stages clear</div><h2 class="big">深海の王を倒した！</h2>${endScores()}
+  showOverlay(`<div class="eyebrow">All stages clear</div><h2 class="big">深海の王を倒した！</h2>${resultBlock(G.result)}${endScores()}
     <p class="lead">残機ボーナス込みのスコアです。</p>
     ${entryBlock(G.score)}
     <div class="row"><button class="btn" type="button" data-act="start">もう一度</button><button class="btn ghost" type="button" data-act="title">タイトルへ</button></div>${boardBlock}${studioBlock}`);
@@ -2051,27 +2160,28 @@ const TUT_PAGES = [
     </div>
     <p class="tut-note">ミスすると残機が1つ減り、強化はすべてなくなります。残機0でミスするとゲームオーバー。復活した直後、機体が点滅している約2秒間は無敵です。</p>` },
   { tab:'敵', html:`
+    <p class="tut-note">ボスはダメージを受けるほど怒り、動きも攻撃も速くなります。撃破までの時間と被弾の数で S〜C の評価がつきます。ボスで力尽きたら「ボス戦から練習」で、すぐにボス戦だけをやり直せます（練習はランキング対象外）。</p>
     <div class="tut-list two">
       <div class="tut-item"><canvas data-fig="en-fan"></canvas><h3>編隊 <small>100点</small></h3><p>5機が波打ちながら並んで飛んできます。5機すべて倒すとカプセルが出ます。</p></div>
       <div class="tut-item"><canvas data-fig="en-dash"></canvas><h3>突撃機 <small>150点</small></h3><p>画面に入ると、自機の高さめがけてまっすぐ突っ込んできます。</p></div>
       <div class="tut-item"><canvas data-fig="en-carrier"></canvas><h3>運び屋 <small>200点</small></h3><p>黄色い六角形。弾4発で倒せて、倒すと必ずカプセルを落とします。</p></div>
       <div class="tut-item"><canvas data-fig="en-turret"></canvas><h3>砲台 <small>300点</small></h3><p>天井や床に付いていて、自機をねらって撃ってきます。弾2発で倒せます。</p></div>
     </div>
-    <div class="tut-item"><canvas data-fig="en-boss" style="height:110px"></canvas><h3>STAGE 1 ボス「コア」 <small>装甲 500点 / 撃破 10,000点</small></h3><p>前にある3枚の装甲（青緑の板）を壊すと、中心の赤いコアに弾が届くようになります。コアに24発当てると撃破。5方向に広がる弾と、自機をねらう弾を交互に撃ってきます。</p></div>
-    <div class="tut-item"><canvas data-fig="en-jelly" style="height:120px"></canvas><h3>STAGE 2 ボス「深淵クラゲ」 <small>撃破 10,000点</small></h3><p>弱点は体の中の赤い核。ふだんはかさに守られていて、ふくらんで「OPEN」と出ている間だけ弾が届きます。開く瞬間に全方向へ弾を放つので、少し離れて待ちましょう。下にたれた触手にふれてもミス。核に24発で撃破。</p></div>
+    <div class="tut-item"><canvas data-fig="en-boss" style="height:110px"></canvas><h3>STAGE 1 ボス「コア」 <small>装甲 500点 / 撃破 10,000点</small></h3><p>前にある3枚の装甲（青緑の板）を壊すと、中心の赤いコアに弾が届くようになります。コアを撃ち続けると撃破。5方向に広がる弾と、自機をねらう弾を交互に撃ってきます。</p></div>
+    <div class="tut-item"><canvas data-fig="en-jelly" style="height:120px"></canvas><h3>STAGE 2 門番「深淵クラゲ」 <small>撃破 10,000点</small></h3><p>無料で遊べる最後の、そして最初の本当の壁。弱点は体の中の赤い核で、かさが開いて「OPEN」と出ている間だけ弾が届きます。触手からは曲がりながら戻ってくる弾。体力が減ると姿を変え、画面を横切る電撃の膜（点線が光ったら1秒後に発生）や、かさを捨てて暴れる最終形態に。倒し方は、自分で見つけてください。</p></div>
     <p class="tut-note">STAGE 2「深海の裂け目」：洞窟がせまくなり、砲台が増えます。中心が白い編隊は弾を撃ってきます。</p>
     <div class="tut-list two">
       <div class="tut-item"><canvas data-fig="en-wall"></canvas><h3>壊せる壁 <small>STAGE 3 ・ 1個20点 ・ 全部で +1000点</small></h3><p>天井から床までふさぐブロックの壁。1個を弾2発で壊せます。黄色いブロックは宝箱で、壊すとカプセルが出ます。1枚の壁を画面から消える前に全部壊すと「WALL CLEAR」で +1000点のボーナス。</p></div>
       <div class="tut-item"><canvas data-fig="en-rear"></canvas><h3>後方機 <small>STAGE 3 ・ 150点</small></h3><p>画面の左（自機の後ろ）から4機で現れ、右へ追い抜いていきます。前ばかり見ていると危険。SNIPER がいると楽に倒せます。</p></div>
     </div>
-    <div class="tut-item"><canvas data-fig="en-fort" style="height:130px"></canvas><h3>STAGE 3 ボス「幽霊戦艦」 <small>砲台 800点 / 撃破 10,000点</small></h3><p>上下の砲台（赤い丸）が3連射でねらってきます。砲台を2つとも壊すと、船体の窓のシャッターが開き、そこが弱点になります。窓に24発で撃破。戦いの間ずっと後方機を呼ぶので、後ろにも注意。</p></div>
+    <div class="tut-item"><canvas data-fig="en-fort" style="height:130px"></canvas><h3>STAGE 3 ボス「幽霊戦艦」 <small>砲台 800点 / 撃破 10,000点</small></h3><p>上下の砲台（赤い丸）が3連射でねらってきます。砲台を2つとも壊すと、船体の窓のシャッターが開き、そこが弱点になります。窓を撃ち続けて撃破。戦いの間ずっと後方機を呼ぶので、後ろにも注意。</p></div>
     <p class="tut-note">STAGE 3「宇宙ステーション」：段々になった機械の通路。壁を撃ち抜きながら進みます。</p>
     <div class="tut-list two">
       <div class="tut-item"><canvas data-fig="en-ember"></canvas><h3>火山弾 <small>STAGE 4 ・ 50点</small></h3><p>噴出孔が噴いた瞬間に2個飛び出し、放物線を描いて落ちてきます。弾1発で壊せます。</p></div>
-      <div class="tut-item"><canvas data-fig="en-worm"></canvas><h3>STAGE 4 ボス「ヒートワーム」 <small>撃破 10,000点</small></h3><p>画面を大きく泳ぎ回る、体の長い海の虫。弱点は先頭の頭だけで、胴体の節は弾を防ぎます（節は弾4発で壊せて200点）。頭から3方向にねらい撃ち。胴体にふれてもミス。頭に30発で撃破。</p></div>
+      <div class="tut-item"><canvas data-fig="en-worm"></canvas><h3>STAGE 4 ボス「ヒートワーム」 <small>撃破 10,000点</small></h3><p>画面を大きく泳ぎ回る、体の長い海の虫。弱点は先頭の頭だけで、胴体の節は弾を防ぎます（節は壊せて200点）。頭から3方向にねらい撃ち。胴体にふれてもミス。頭を撃ち続けて撃破。</p></div>
     </div>
     <p class="tut-note">STAGE 4「熱水噴出孔」：ギザギザの岩場。噴出孔の合図を見て、噴くタイミングをよけて進みます。</p>
-    <div class="tut-item"><canvas data-fig="en-king" style="height:150px"></canvas><h3>STAGE 5 最終ボス「深海の王」 <small>宝石 1,500点 / 撃破 30,000点</small></h3><p>まず顔の前の宝石3つ（青いひし形）を壊すと、口が開いて弱点になります。口に40発で撃破。ときどき自機の高さに赤い点線が出たら、1秒後にそこへ太いレーザー。上下に動いてよけましょう。口が開くと全方向弾も加わります。</p></div>
+    <div class="tut-item"><canvas data-fig="en-king" style="height:150px"></canvas><h3>STAGE 5 最終ボス「深海の王」 <small>宝石 1,500点 / 撃破 30,000点</small></h3><p>まず顔の前の宝石3つ（青いひし形）を壊すと、口が開いて弱点になります。口を撃ち続けて撃破。ときどき自機の高さに赤い点線が出たら、1秒後にそこへ太いレーザー。上下に動いてよけましょう。口が開くと全方向弾も加わります。</p></div>
     <p class="tut-note">STAGE 5「深海の玉座」：短い道中のあと「ボスラッシュ」。コア → 深淵クラゲ → 幽霊戦艦 → ヒートワーム（少し弱くなっています、1体5,000点）と連続で戦い、最後に深海の王が現れます。</p>` },
   { tab:'アイテム', html:`
     <div class="tut-item"><h3>AUTO と MANUAL</h3><p>アイテムの使い方は2種類。タイトル画面（または一時停止中）で切り替えられます。最初は AUTO です。</p>${modeBlock()}</div>
