@@ -299,7 +299,8 @@ const sfx = {
   power: () => [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => tone(f, .1, 'triangle', .06), i * 55)),
   hit:   () => tone(240, .05, 'square', .025, -120),
   die:   () => { noise(.8, .2); tone(320, .6, 'sawtooth', .05, -280); },
-  boss:  () => { noise(1.4, .24); tone(120, 1.2, 'sawtooth', .06, -80); }
+  boss:  () => { noise(1.4, .24); tone(120, 1.2, 'sawtooth', .06, -80); },
+  warn:  () => { for (let i = 0; i < 4; i++) setTimeout(() => { tone(i % 2 ? 520 : 690, .32, 'square', .045); }, i * 360); noise(1.6, .1); tone(55, 1.8, 'sawtooth', .07, -20); }
 };
 
 /* ---------- terrain ---------- */
@@ -645,13 +646,13 @@ function spawn(type){
     playTrack('boss');
     G.bossT0 = G.t; G.bossHits = 0;
     if (!G.mcfg && !G.practice && G.p) G.snap = { stage:G.stage, ship:G.ship, items:G.items, p:{ spd:G.p.spd, missile:G.p.missile, weapon:G.p.weapon, opts:G.p.opts, snipers:G.p.snipers, shield:G.p.shield } };
-    if (G.mcfg){ G.boss = makeBoss(G.mcfg.boss, false); G.boss.tint = G.mcfg.tint; G.bossBanner = 2.6; return; }
+    if (G.mcfg){ G.boss = makeBoss(G.mcfg.boss, false); G.boss.tint = G.mcfg.tint; G.bossBanner = 3.2; sfx.warn(); return; }
     if (G.stage === 5){ G.rush = ['core','jelly','fort','worm','king']; G.rushN = 0; nextRush(); return; }
     G.boss = makeBoss(['core','jelly','fort','worm'][G.stage - 1], false);
     // STAGE 1 (the free part) has a gentler boss: half the toughness of the other stages' rule (2x the original)
     if (G.stage === 1){ const b = G.boss; b.hp = Math.ceil(b.hp / 2); if (b.plates) b.plates = b.plates.map(v => Math.ceil(v / 2)); }
-    if (G.stage === 2) Object.assign(G.boss, { gate:true, hp:150, hp0:150, form:1, cd:1.4 }); // THE GATEKEEPER
-    G.bossBanner = 2.6;
+    if (G.stage === 2) Object.assign(G.boss, { gate:true, sc:2.2, x:W + 260, hp:340, hp0:340, form:1, cd:1.4 }); // THE GATEKEEPER
+    G.bossBanner = 3.2; sfx.warn();
   }
 }
 /* bosses; rush versions (STAGE 5) are weaker so five fights in a row stay reasonable */
@@ -667,7 +668,7 @@ function makeBoss(type, rush){
 }
 function nextRush(){
   const type = G.rush.shift(); G.rushN++;
-  G.boss = makeBoss(type, type !== 'king'); G.bossDead = false; G.bossBanner = 2.6;
+  G.boss = makeBoss(type, type !== 'king'); G.bossDead = false; G.bossBanner = 3.2; sfx.warn();
   if (type === 'king') playTrack('boss');
 }
 function aim(x, y, spd){
@@ -772,7 +773,7 @@ function updatePlayer(dt){
   if (!last || Math.abs(last.x - p.x) + Math.abs(last.y - p.y) > 1){ p.hist.push({ x:p.x, y:p.y }); if (p.hist.length > 40) p.hist.shift(); }
   fire(dt);
   const wx = p.x + G.scroll, cy = ceilY(wx), fy = floorY(wx);
-  if (p.inv <= 0 && G.boss && G.boss.gate && zapLive(G.boss) && Math.abs(p.y - G.boss.zap.y) < 8 && p.x < G.boss.x - 40){ killPlayer(); return; }
+  if (p.inv <= 0 && G.boss && G.boss.gate && zapLive(G.boss) && Math.abs(p.y - G.boss.zap.y) < 8 && p.x < zapEnd(G.boss)){ killPlayer(); return; }
   if (p.inv <= 0) for (const g of G.gates){ if (gateOn(g) && Math.abs(p.x - g.x) < 9 && g.x < W){ killPlayer(); return; } }
   if (p.inv <= 0) for (const v of G.vents){ const c = ventColumn(v); if (c && Math.abs(p.x - v.x) < 13 && p.y > c.y0 - 4 && p.y < c.y1 + 4){ killPlayer(); return; } }
   for (const k of G.blocks){
@@ -1007,7 +1008,7 @@ function drawKing(b){
 /* ---------- boss: shared helpers ---------- */
 const BOSS_NAME = { core:'コア', jelly:'深淵クラゲ', fort:'幽霊戦艦', worm:'ヒートワーム', king:'深海の王' };
 function bossWeakPoint(b){
-  if (b.type === 'jelly') return { x:b.x - 4, y:b.y + 6 };
+  if (b.type === 'jelly') return jellyCore(b);
   if (b.type === 'worm') return { x:b.x, y:b.y };
   if (b.type === 'king'){ const g = b.gems.find(g => g.hp > 0); return g ? { x:b.x - 44, y:b.y + g.dy } : kingMouth(b); }
   if (b.type === 'fort'){ const c = b.cannons.find(c => c.hp > 0); return c ? { x:b.x - 40, y:b.y + c.dy } : { x:b.x - 38, y:b.y }; }
@@ -1017,9 +1018,10 @@ function bossTouches(b, p){
   if (b.type === 'king') return ((p.x - (b.x + 20)) / 80) ** 2 + ((p.y - b.y) / 110) ** 2 < 1;
   if (b.type === 'worm') return d2(p, b) < 20 * 20 || wormSegs(b).some(g => g.s.hp > 0 && d2(p, g) < 16 * 16);
   if (b.type === 'jelly'){
-    const open = jellyOpen(b), by = b.y - (open ? 16 : 0);
-    if (((p.x - b.x) / 46) ** 2 + ((p.y - by) / (open ? 30 : 36)) ** 2 < 1) return true;
-    for (const q of tentaclePts(b)) if (d2(p, q) < 64) return true;
+    const open = jellyOpen(b), S = JS(b), by = b.y - (open ? 16 : 0) * S;
+    if (b.gate && b.form === 3) return d2(p, jellyCore(b)) < (16 * S) ** 2;
+    if (((p.x - b.x) / (46 * S)) ** 2 + ((p.y - by) / ((open ? 30 : 36) * S)) ** 2 < 1) return true;
+    for (const q of tentaclePts(b)) if (d2(p, q) < 64 * S) return true;
     return false;
   }
   if (b.type === 'fort'){
@@ -1048,11 +1050,14 @@ function gateForm(b){
   const left = b.hp / b.hp0, f = left > .66 ? 1 : left > .33 ? 2 : 3;
   if (f !== b.form){ b.form = f; b.guard = 1.2; b.zap = null; G.eb.length = 0; G.shake = .8; sfx.boss(); floatText(b.x - 40, b.y - 50, f === 2 ? 'FORM II' : 'FORM III', C.coral, 1.6, 16); }
 }
+const JS = b => b.sc || 1;                      // the gatekeeper is drawn and hit at 2.2x
+const jellyCore = b => ({ x:b.x - 4 * JS(b), y:b.y + 6 * JS(b) });
 function tentaclePts(b){
-  const pts = [], open = jellyOpen(b);
-  for (let i = 0; i < 5; i++){
-    const tx = b.x - 28 + i * 14;
-    for (let j = 1; j <= 4; j++) pts.push({ x:tx + Math.sin(b.t * 3 + i + j * .6) * 7 * j / 4, y:b.y + (open ? 14 : 22) + j * 14 });
+  const pts = [], open = jellyOpen(b), S = JS(b), n = b.gate ? 7 : 5;
+  if (b.gate && b.form === 3) return pts;          // tentacles are gone once the bell shatters
+  for (let i = 0; i < n; i++){
+    const tx = b.x + (-28 + i * 56 / (n - 1)) * S;
+    for (let j = 1; j <= 4; j++) pts.push({ x:tx + Math.sin(b.t * 3 + i + j * .6) * 7 * j / 4 * S, y:b.y + ((open ? 14 : 22) + j * 14) * S, i, j });
   }
   return pts;
 }
@@ -1069,18 +1074,19 @@ function updateJelly(b, dt){
 function updateGate(b, dt){
   b.t += dt; b.flash = Math.max(0, b.flash - dt); b.guard = Math.max(0, (b.guard || 0) - dt);
   const f = b.form || 1;
-  b.x += (W - 130 - b.x) * Math.min(1, dt * 1.1);
-  b.y = f === 3 ? H / 2 + 100 * Math.sin(b.t * 1.5) * Math.cos(b.t * .4) : H / 2 + 75 * Math.sin(b.t * (f === 2 ? .8 : .6));
+  b.x += ((f === 3 ? W - 150 : W - 190) - b.x) * Math.min(1, dt * (b.x > W ? .5 : 1.1));
+  b.y = f === 3 ? H / 2 + 110 * Math.sin(b.t * 1.5) * Math.cos(b.t * .4) : 150 + 26 * Math.sin(b.t * (f === 2 ? .8 : .6));
+  const S = JS(b), core = jellyCore(b);
   if (b.x > W - 50) return;
   gateForm(b);
   if (b.guard > 0) return;
   const open = jellyOpen(b);
   if (f < 3){
-    if (open && !b.wasOpen){ for (let k = 0; k < 14; k++){ const a = k / 14 * 6.283 + b.t; G.eb.push({ x:b.x - 4, y:b.y + 6, vx:Math.cos(a) * 115, vy:Math.sin(a) * 115 }); } }
+    if (open && !b.wasOpen){ for (let k = 0; k < 18; k++){ const a = k / 18 * 6.283 + b.t; G.eb.push({ x:core.x, y:core.y, vx:Math.cos(a) * 115, vy:Math.sin(a) * 115 }); } }
     if (!open){ b.cd -= dt; if (b.cd <= 0){ b.cd = f === 2 ? 1.1 : 1.4;
       // tentacles fling bullets that curve back toward the middle
-      for (let i = 0; i < 5; i++){ const tx = b.x - 28 + i * 14, d = i < 2 ? -1 : i > 2 ? 1 : 0; G.eb.push({ x:tx, y:b.y + 60, vx:-120, vy:d * 70 + 30, turn:-d * 1.1 || .0 }); }
-      aim(b.x - 30, b.y, 150); } }
+      for (let i = 0; i < 7; i++){ const tx = b.x + (-28 + i * 56 / 6) * S, d = i < 3 ? -1 : i > 3 ? 1 : 0; G.eb.push({ x:tx, y:b.y + 70 * S, vx:-120, vy:d * 60 + 20, turn:-d * 1.1 }); }
+      aim(core.x - 20, core.y, 150); } }
   }
   b.wasOpen = open;
   if (f === 2){
@@ -1089,24 +1095,98 @@ function updateGate(b, dt){
     else { b.zap.t += dt; if (b.zap.t > 1.7) b.zap = null; }
   }
   if (f === 3){
-    b.sp = (b.sp || 0) - dt; if (b.sp <= 0){ b.sp = .11; b.sa = (b.sa || 0) + .55; for (const o of [0, Math.PI]) G.eb.push({ x:b.x - 4, y:b.y + 6, vx:Math.cos(b.sa + o) * 120, vy:Math.sin(b.sa + o) * 120 }); }
-    b.cd -= dt; if (b.cd <= 0){ b.cd = 1.5; for (let k = -1; k <= 1; k++) aim(b.x - 20, b.y + k * 18, 170); }
+    b.sp = (b.sp || 0) - dt; if (b.sp <= 0){ b.sp = .11; b.sa = (b.sa || 0) + .55; for (const o of [0, Math.PI]) G.eb.push({ x:core.x, y:core.y, vx:Math.cos(b.sa + o) * 120, vy:Math.sin(b.sa + o) * 120 }); }
+    b.cd -= dt; if (b.cd <= 0){ b.cd = 1.5; for (let k = -1; k <= 1; k++) aim(core.x - 20, core.y + k * 18, 170); }
   }
 }
 const zapLive = b => b && b.zap && b.zap.t > .9;
+const zapEnd = b => b.x - 100 * JS(b);
 function shotVsJelly(b, s){
-  const open = jellyOpen(b), nx = b.x - 4, ny = b.y + 6;
-  if (b.gate && b.guard > 0){ if (d2(s, { x:nx, y:ny }) < 50 * 50) s.dead = true; return; }
+  const open = jellyOpen(b), S = JS(b), c = jellyCore(b), nx = c.x, ny = c.y, cr = 12 * Math.min(S, 1.8);
+  if (b.gate && b.guard > 0){ if (d2(s, c) < (50 * S) ** 2) s.dead = true; return; }
   if (open){
-    const hit = s.k === 'b' ? Math.abs(s.y - ny) < 12 && s.x >= nx - 11 && s.x - s.len <= nx + 11 : d2(s, { x:nx, y:ny }) < 13 * 13;
-    if (hit && b.gate && b.form < 3 && jellySinceOpen(b) < .45){ floatText(nx, ny - 22, 'CRITICAL ×5', C.sun, .6, 12); b.flash = .12; return damageBoss(b, s, dmgOf(s) * 5); }
+    const hit = s.k === 'b' ? Math.abs(s.y - ny) < cr && s.x >= nx - cr && s.x - s.len <= nx + cr : d2(s, c) < (cr + 1) ** 2;
+    if (hit && b.gate && b.form < 3 && jellySinceOpen(b) < .35){ floatText(nx, ny - 22, 'CRITICAL ×5', C.sun, .6, 12); b.flash = .12; return damageBoss(b, s, dmgOf(s) * 5); }
     if (hit) return damageBoss(b, s, dmgOf(s));
-    if (Math.abs(s.y - ny) < 13) return; // the raised bell leaves a clear path to the nucleus
+    if (Math.abs(s.y - ny) < cr + 1) return; // the raised bell leaves a clear path to the nucleus
   }
-  const by = b.y - (open ? 16 : 0);
-  if (((s.x - b.x) / 44) ** 2 + ((s.y - by) / (open ? 28 : 34)) ** 2 < 1){ s.dead = true; if (!open) b.flash = .03; }
+  if (b.gate && b.form === 3) return;
+  const by = b.y - (open ? 16 : 0) * S;
+  if (((s.x - b.x) / (44 * S)) ** 2 + ((s.y - by) / ((open ? 28 : 34) * S)) ** 2 < 1){ s.dead = true; if (!open) b.flash = .03; }
+}
+/* THE GATEKEEPER, drawn big: a violet glow fills the cave, seven ribbon tentacles with glowing nodes hang below,
+   frilled oral arms, a translucent bell with a bright rim and light pulsing along its veins, and the red heart inside. */
+function drawGate(b){
+  const S = JS(b), open = jellyOpen(b), inhale = jellyInhale(b), lift = (open ? 16 : 0) * S, t = b.t, c = jellyCore(b);
+  const pulse = inhale ? .9 + .03 * Math.sin(t * 30) : 1 + .04 * Math.sin(t * 4);
+  // the whole cave glows with it
+  const amb = ctx.createRadialGradient(b.x, b.y, 20, b.x, b.y, 300);
+  amb.addColorStop(0, `rgba(150,90,255,${.22 + .06 * Math.sin(t * 2)})`); amb.addColorStop(1, 'rgba(60,20,120,0)');
+  ctx.fillStyle = amb; ctx.fillRect(0, 0, W, H);
+  // electric membrane
+  if (b.zap){
+    const z = b.zap, live = z.t > .9, x1 = zapEnd(b);
+    if (!live){ ctx.strokeStyle = '#7fe0ff'; ctx.globalAlpha = .35 + .35 * Math.abs(Math.sin(z.t * 25)); ctx.setLineDash([6, 6]); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(0, z.y); ctx.lineTo(x1, z.y); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1; }
+    else { ctx.strokeStyle = 'rgba(127,224,255,.3)'; ctx.lineWidth = 16; ctx.beginPath(); ctx.moveTo(0, z.y); ctx.lineTo(x1, z.y); ctx.stroke();
+      for (const [w, col] of [[3, '#bff4ff'], [1.2, '#ffffff']]){ ctx.strokeStyle = col; ctx.lineWidth = w; ctx.beginPath(); for (let x = 0; x <= x1; x += 10) ctx.lineTo(x, z.y + (Math.random() - .5) * 10); ctx.stroke(); } }
+  }
+  if (b.form === 3){ // bell shattered: shards circle a huge exposed heart
+    for (let k = 0; k < 9; k++){ const a = k / 9 * 6.283 + t * 1.2, r = 46 * S + 6 * Math.sin(t * 3 + k);
+      ctx.save(); ctx.translate(c.x + Math.cos(a) * r, c.y + Math.sin(a) * r * .75); ctx.rotate(a + t);
+      ctx.fillStyle = 'rgba(170,130,255,.55)'; ctx.strokeStyle = 'rgba(232,220,255,.8)'; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(-14, -6); ctx.lineTo(16, 0); ctx.lineTo(-10, 7); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore(); }
+    const g = ctx.createRadialGradient(c.x, c.y, 2, c.x, c.y, 44 * S / 2.2 * 1.6);
+    g.addColorStop(0, b.flash > 0 ? '#ffffff' : '#ffe2d8'); g.addColorStop(.35, 'rgba(255,90,70,.9)'); g.addColorStop(1, 'rgba(255,60,40,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(c.x, c.y, 70, 0, 6.283); ctx.fill();
+    ctx.fillStyle = b.flash > 0 ? C.ink : '#ff4a3a'; ctx.beginPath(); ctx.arc(c.x, c.y, 22 + 2 * Math.sin(t * 9), 0, 6.283); ctx.fill();
+    ctx.strokeStyle = '#ffd0c0'; ctx.lineWidth = 2; for (let k = 0; k < 4; k++){ ctx.beginPath(); ctx.arc(c.x, c.y, 26 + k * 9 + (t * 30 % 9), 0, 6.283); ctx.globalAlpha = .35 - k * .08; ctx.stroke(); } ctx.globalAlpha = 1;
+    return;
+  }
+  // tentacles: tapered ribbons with glowing nodes
+  const n = 7;
+  for (let i = 0; i < n; i++){
+    const tx = b.x + (-28 + i * 56 / (n - 1)) * S, pts = [[tx, b.y + (14 - lift / S * .5) * S]];
+    for (let j = 1; j <= 6; j++) pts.push([tx + Math.sin(t * 3 + i + j * .6) * 7 * j / 4 * S, b.y + ((open ? 14 : 22) + j * (j > 4 ? 13 : 14)) * S]);
+    for (const [w, col, a] of [[10, '#6a3cc8', .35], [6, '#b07cff', .8], [2.2, '#f0c8ff', .9]]){
+      ctx.strokeStyle = col; ctx.globalAlpha = a; ctx.lineWidth = w * (i % 2 ? .8 : 1); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.beginPath(); pts.forEach(([x, y], k) => k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    for (let j = 2; j < pts.length; j += 2){ const [x, y] = pts[j], gl = .5 + .5 * Math.sin(t * 5 - j + i); ctx.fillStyle = `rgba(127,240,255,${.4 + .5 * gl})`; ctx.beginPath(); ctx.arc(x, y, 3 + 1.5 * gl, 0, 6.283); ctx.fill(); }
+  }
+  // frilled oral arms under the bell
+  ctx.save(); ctx.translate(b.x, b.y - lift + 8 * S);
+  for (let k = -2; k <= 2; k++){ ctx.fillStyle = k % 2 ? 'rgba(255,140,200,.35)' : 'rgba(220,120,255,.35)'; ctx.beginPath(); ctx.moveTo(k * 12 * S - 8 * S, 0);
+    for (let y = 0; y <= 34 * S; y += 6) ctx.lineTo(k * 12 * S + Math.sin(t * 4 + y * .08 + k) * 6 * S - 6 * S, y); for (let y = 34 * S; y >= 0; y -= 6) ctx.lineTo(k * 12 * S + Math.sin(t * 4 + y * .08 + k) * 6 * S + 6 * S, y); ctx.closePath(); ctx.fill(); }
+  ctx.restore();
+  // the heart, seen through the bell (brighter when it is open)
+  const hg = ctx.createRadialGradient(c.x, c.y, 2, c.x, c.y, 34);
+  hg.addColorStop(0, b.flash > 0 ? '#fff' : '#ffd8cc'); hg.addColorStop(.4, open ? 'rgba(255,80,60,.95)' : 'rgba(255,80,60,.45)'); hg.addColorStop(1, 'rgba(255,60,40,0)');
+  ctx.fillStyle = hg; ctx.beginPath(); ctx.arc(c.x, c.y, 34, 0, 6.283); ctx.fill();
+  ctx.fillStyle = b.flash > 0 ? C.ink : '#ff4a3a'; ctx.globalAlpha = open ? 1 : .55; ctx.beginPath(); ctx.arc(c.x, c.y, 14 + 1.5 * Math.sin(t * 8), 0, 6.283); ctx.fill(); ctx.globalAlpha = 1;
+  // inhale: light streams into the heart
+  if (inhale){ ctx.strokeStyle = 'rgba(220,200,255,.7)'; ctx.lineWidth = 1.5; for (let k = 0; k < 12; k++){ const a = k / 12 * 6.283 + t * 3, r = 110 - (t * 160 % 70); ctx.beginPath(); ctx.moveTo(c.x + Math.cos(a) * r, c.y + Math.sin(a) * r * .8); ctx.lineTo(c.x + Math.cos(a) * (r - 18), c.y + Math.sin(a) * (r - 18) * .8); ctx.stroke(); } }
+  // the bell
+  ctx.save(); ctx.translate(b.x, b.y - lift); ctx.scale(pulse * S, S / pulse);
+  const bell = new Path2D(); bell.ellipse(0, 0, 44, 34, 0, Math.PI, 0); bell.quadraticCurveTo(22, 14, 0, 10); bell.quadraticCurveTo(-22, 14, -44, 0); bell.closePath();
+  const bg = ctx.createLinearGradient(0, -34, 0, 12); bg.addColorStop(0, 'rgba(190,150,255,.62)'); bg.addColorStop(.7, 'rgba(110,60,210,.42)'); bg.addColorStop(1, 'rgba(255,120,220,.3)');
+  ctx.fillStyle = bg; ctx.fill(bell);
+  ctx.save(); ctx.clip(bell);
+  ctx.fillStyle = 'rgba(70,30,150,.35)'; ctx.beginPath(); ctx.ellipse(0, -4, 30, 22, 0, Math.PI, 0); ctx.fill();          // inner bell
+  ctx.lineWidth = 1.4 / S; for (let k = -4; k <= 4; k++){                                                                    // veins with travelling light
+    ctx.strokeStyle = 'rgba(200,170,255,.45)'; ctx.beginPath(); ctx.moveTo(k * 9, 9); ctx.quadraticCurveTo(k * 13, -14, k * 4.5, -32); ctx.stroke();
+    const u = ((t * (inhale ? -1.6 : .7) + k * .13) % 1 + 1) % 1, px = (1 - u) * (1 - u) * k * 9 + 2 * (1 - u) * u * k * 13 + u * u * k * 4.5, py = (1 - u) * (1 - u) * 9 + 2 * (1 - u) * u * -14 + u * u * -32;
+    ctx.fillStyle = 'rgba(127,240,255,.9)'; ctx.beginPath(); ctx.arc(px, py, 1.6, 0, 6.283); ctx.fill();
+  }
+  for (let k = 0; k < 14; k++){ ctx.fillStyle = 'rgba(255,220,255,.25)'; ctx.beginPath(); ctx.arc(Math.sin(k * 7.3) * 34, -6 - Math.abs(Math.cos(k * 3.1)) * 24, 1.2 + (k % 3) * .6, 0, 6.283); ctx.fill(); }
+  ctx.restore();
+  ctx.lineWidth = 6 / S; ctx.strokeStyle = 'rgba(200,170,255,.35)'; ctx.stroke(bell);                                       // rim glow
+  ctx.lineWidth = 2 / S; ctx.strokeStyle = b.flash > 0 ? '#ffffff' : '#efe4ff'; ctx.stroke(bell);
+  ctx.restore();
+  if (open){ ctx.fillStyle = C.sun; ctx.font = '700 11px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-mono'); ctx.textAlign = 'center'; ctx.fillText('OPEN', c.x, c.y + 44); }
 }
 function drawJelly(b){
+  if (b.gate) return drawGate(b);
   const open = jellyOpen(b), lift = open ? 16 : 0, inhale = jellyInhale(b), pulse = inhale ? .9 + .03 * Math.sin(b.t * 30) : 1 + .05 * Math.sin(b.t * 6);
   if (b.gate && b.zap){ // electric membrane
     const z = b.zap, live = z.t > .9, x1 = b.x - 40;
@@ -1337,7 +1417,7 @@ function update(dt){
   G.caps = G.caps.filter(o => !o.dead); G.blocks = G.blocks.filter(o => !o.dead); G.vents = G.vents.filter(o => !o.dead); G.parts = G.parts.filter(o => o.l > 0);
   for (const s of G.texts){ s.l -= dt; s.y -= 22 * dt; } G.texts = G.texts.filter(s => s.l > 0); if (G.hint > 0) G.hint -= dt;
   if (G.banner > 0) G.banner -= dt;
-  if (G.bossBanner > 0) G.bossBanner -= dt;
+  if (G.bossBanner > 0){ G.bossBanner -= dt; if (G.bossBanner > .6) G.shake = Math.max(G.shake, .12); }
   if (G.flashT > 0){ G.flashT -= dt; if (G.flashT <= 0) updatePanel(); }
 
   if (G.nextBossT > 0){ G.nextBossT -= dt; if (G.nextBossT <= 0) nextRush(); }
@@ -1875,11 +1955,18 @@ function draw(){
     ctx.fillText(G.boss.type === 'king' ? 'FINAL BOSS' : `BOSS RUSH ${G.rushN} / 4`, W / 2, H - 14);
   }
   if (G.bossBanner > 0 && G.boss){
-    ctx.globalAlpha = Math.min(1, G.bossBanner / .5) * (Math.floor(G.bossBanner * 5) % 2 ? 1 : .55); ctx.textAlign = 'center';
-    ctx.fillStyle = C.coral; ctx.font = '700 14px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-mono');
-    ctx.fillText(G.boss.type === 'king' ? 'FINAL WARNING' : 'WARNING', W / 2, 54);
-    ctx.fillStyle = C.ink; ctx.font = '700 18px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-body');
-    ctx.fillText((G.boss.gate ? '門番「' : 'ボス「') + ((G.mcfg && G.mcfg.bossName) || BOSS_NAME[G.boss.type]) + '」', W / 2, 76); ctx.globalAlpha = 1;
+    // boss entrance: the screen dims, red hazard bands sweep in from both edges, a siren, and the name
+    const k = Math.min(1, G.bossBanner / .5, (3.2 - G.bossBanner) / .3), fm = getComputedStyle(document.documentElement).getPropertyValue('--f-mono');
+    ctx.fillStyle = '#000'; ctx.globalAlpha = .38 * k; ctx.fillRect(0, 0, W, H);
+    const bh = 22, off = (G.t * 90) % 28;
+    for (const y of [H / 2 - 66, H / 2 + 44]){
+      ctx.globalAlpha = .85 * k; ctx.fillStyle = '#5a0c10'; ctx.fillRect(0, y, W, bh);
+      ctx.fillStyle = '#e8343a'; for (let x = -28 + (y < H / 2 ? off : -off); x < W + 28; x += 28){ ctx.beginPath(); ctx.moveTo(x, y + bh); ctx.lineTo(x + 12, y); ctx.lineTo(x + 22, y); ctx.lineTo(x + 10, y + bh); ctx.closePath(); ctx.fill(); }
+    }
+    ctx.globalAlpha = k * (Math.floor(G.bossBanner * 4) % 2 ? 1 : .7); ctx.textAlign = 'center';
+    ctx.fillStyle = '#ff5a50'; ctx.font = '700 30px ' + fm; ctx.fillText(G.boss.type === 'king' ? 'FINAL WARNING' : 'WARNING', W / 2, H / 2 - 4);
+    ctx.fillStyle = C.ink; ctx.font = '700 17px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-body');
+    ctx.fillText((G.boss.gate ? '門番「' : 'ボス「') + ((G.mcfg && G.mcfg.bossName) || BOSS_NAME[G.boss.type]) + '」', W / 2, H / 2 + 26); ctx.globalAlpha = 1;
   }
   if (G.hint > 0){
     ctx.globalAlpha = Math.min(1, G.hint / .5);
