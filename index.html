@@ -679,7 +679,7 @@ function makeBoss(type, rush){
   switch (type){
     case 'core':  return { type, x:W + 90, y:H / 2, t:0, hp:hp(24), plates:Array(3).fill(hp(5)), cd:2, vol:0, flash:0, dead:false, mk:1 };
     case 'jelly': return { type, x:W + 90, y:H / 2, t:0, hp:hp(24), cd:1.6, wasOpen:false, flash:0, dead:false };
-    case 'fort':  return { type, x:W + 110, y:H / 2, t:0, hp:hp(24), cannons:[{ dy:-64, hp:hp(12), cd:1.5 }, { dy:64, hp:hp(12), cd:2.4 }], cd:2, call:4, flash:0, dead:false };
+    case 'fort':  return { type, x:W + 110, y:H / 2, t:0, hp:hp(30), cannons:[{ dx:-25, dy:-44, hp:hp(12), cd:1.5 }, { dx:-12, dy:36, hp:hp(12), cd:2.4 }], cd:2, call:4, flash:0, dead:false };
     case 'worm':  return { type, x:W + 60, y:H / 2, t:0, hp:hp(42), segs:Array.from({ length:rush ? 8 : 10 }, () => ({ hp:rush ? 3 : 4 })), hist:Array.from({ length:120 }, (_, i) => ({ x:W + 60 + (120 - i) * 4, y:H / 2 })), cd:2, flash:0, dead:false };
     case 'king':  return { type, x:W + 140, y:H / 2, t:0, hp:160, gems:[{ dy:-56, hp:60, cd:1.2 }, { dy:56, hp:60, cd:2.3 }, { dy:-92, hp:60, cd:3.1 }], laser:null, lcd:3.5, rcd:2.5, call:6, flash:0, dead:false };
   }
@@ -1071,7 +1071,7 @@ function bossWeakPoint(b){
   if (b.type === 'jelly') return jellyCore(b);
   if (b.type === 'worm') return { x:b.x, y:b.y };
   if (b.type === 'king'){ const g = b.gems.find(g => g.hp > 0); return g ? { x:b.x - 44, y:b.y + g.dy } : kingMouth(b); }
-  if (b.type === 'fort'){ const c = b.cannons.find(c => c.hp > 0); return c ? { x:b.x - 40, y:b.y + c.dy } : { x:b.x - 38, y:b.y }; }
+  if (b.type === 'fort'){ const c = b.cannons.find(c => c.hp > 0); return c ? { x:b.x + c.dx, y:b.y + c.dy } : { x:b.x - 40, y:b.y + 2 }; }
   const i = b.plates.findIndex(v => v > 0); return i >= 0 ? { x:plateX(b, i), y:b.y } : { x:b.x - 22, y:b.y };
 }
 function bossTouches(b, p){
@@ -1085,8 +1085,9 @@ function bossTouches(b, p){
     return false;
   }
   if (b.type === 'fort'){
-    if (p.x > b.x - 30 && p.x < b.x + 90 && Math.abs(p.y - b.y) < 96) return true;
-    return b.cannons.some(c => c.hp > 0 && d2(p, { x:b.x - 40, y:b.y + c.dy }) < 16 * 16);
+    if (p.x > b.x - 10 && p.y > b.y - 150 && p.y < b.y + 80) return true;                        // the hull and rigging
+    if (((p.x - (b.x - 38)) / 34) ** 2 + ((p.y - (b.y + 5)) / 30) ** 2 < 1) return true;        // the dragon skull on the bow
+    return b.cannons.some(c => c.hp > 0 && d2(p, { x:b.x + c.dx, y:b.y + c.dy }) < 16 * 16);
   }
   const dx = p.x - (b.x + 14), dy = p.y - b.y;
   return dx * dx + dy * dy < 44 * 44 || (Math.abs(dy) < 20 && p.x > plateX(b, 0) - 6 && p.x < b.x);
@@ -1324,26 +1325,26 @@ function drawJelly(b){
   if (open){ ctx.fillStyle = C.sun; ctx.font = '700 10px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-mono'); ctx.textAlign = 'center'; ctx.fillText('OPEN', b.x - 4, b.y + 30); }
 }
 
-/* ---------- boss 3: 幽霊戦艦 (wrecked battleship; destroy both cannons to open the bridge) ---------- */
+/* ---------- boss 3: 幽霊戦艦 (a ghost galleon with a dragon skull on the bow; destroy the bow cannon and the ghost lantern to break the seal on the skull's jaws) ---------- */
 function updateFort(b, dt){
-  b.t += dt; b.x += (W - 110 - b.x) * Math.min(1, dt * .9); b.y = H / 2 + 20 * Math.sin(b.t * .5);
+  b.t += dt; b.x += (W - 180 - b.x) * Math.min(1, dt * .9); b.y = H / 2 + 20 * Math.sin(b.t * .5);
   b.flash = Math.max(0, b.flash - dt);
   if (b.x > W - 40) return;
   for (const c of b.cannons){
     if (c.hp <= 0) continue; c.cd -= dt;
     if (c.cd <= 0){ c.cd = 1.9; c.left = 3; c.gap = 0; }
-    if (c.left > 0){ c.gap -= dt; if (c.gap <= 0){ c.gap = .14; c.left--; aim(b.x - 52, b.y + c.dy, 175); } }
+    if (c.left > 0){ c.gap -= dt; if (c.gap <= 0){ c.gap = .14; c.left--; aim(b.x + c.dx - 8, b.y + c.dy, 175); } }
   }
   b.call -= dt; if (b.call <= 0){ b.call = 6; spawn('rear'); }
   if (b.cannons.every(c => c.hp <= 0)){
     b.cd -= dt;
-    if (b.cd <= 0){ b.cd = 1.3; for (let k = -3; k <= 3; k++){ const a = Math.PI + k * .2; G.eb.push({ x:b.x - 46, y:b.y, vx:Math.cos(a) * 150, vy:Math.sin(a) * 150 }); } }
+    if (b.cd <= 0){ b.cd = 1.3; for (let k = -3; k <= 3; k++){ const a = Math.PI + k * .2; G.eb.push({ x:b.x - 46, y:b.y + 4, vx:Math.cos(a) * 150, vy:Math.sin(a) * 150 }); } }
   }
 }
 function shotVsFort(b, s){
   for (const c of b.cannons){
     if (c.hp <= 0) continue;
-    const cx = b.x - 40, cy = b.y + c.dy;
+    const cx = b.x + c.dx, cy = b.y + c.dy;
     const hit = s.k === 'b' ? Math.abs(s.y - cy) < 14 && s.x >= cx - 13 && s.x - s.len <= cx + 13 : d2(s, { x:cx, y:cy }) < 14 * 14;
     if (!hit) continue;
     s.dead = true; c.hp -= dmgOf(s); b.flash = .05; sfx.hit();
@@ -1351,10 +1352,44 @@ function shotVsFort(b, s){
     return;
   }
   const open = b.cannons.every(c => c.hp <= 0);
-  if (open && Math.abs(s.y - b.y) < 16 && s.x >= b.x - 48 && (s.k === 'b' ? s.x - s.len <= b.x - 30 : s.x <= b.x - 28)) return damageBoss(b, s, dmgOf(s));
-  if (s.x > b.x - 32 && s.x < b.x + 92 && Math.abs(s.y - b.y) < 96) s.dead = true;
+  if (open && Math.abs(s.y - (b.y + 4)) < 18 && s.x >= b.x - 60 && (s.k === 'b' ? s.x - s.len <= b.x - 20 : s.x <= b.x - 18)) return damageBoss(b, s, dmgOf(s));
+  if (s.x > b.x - 10 && s.y > b.y - 160 && s.y < b.y + 90) s.dead = true; // the hull soaks up everything else
+}
+/* the galleon is Blue Leaf's concept art (img/ghostship.webp); weak points are drawn on top of it */
+const SHIP_IMG = new Image(); SHIP_IMG.src = 'img/ghostship.webp';
+function drawGhostShip(b){
+  const k = .62, open = b.cannons.every(c => c.hp <= 0), t = b.t, now = performance.now() / 1000;
+  const bob = Math.sin(t * 1.3) * 2; // it rides on its ghost fire
+  ctx.save(); ctx.translate(0, bob);
+  ctx.drawImage(SHIP_IMG, b.x - 39 - 52 * k, b.y - 272 * k, 516 * k, 430 * k);
+  if (b.flash > 0){ ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = .35; ctx.drawImage(SHIP_IMG, b.x - 39 - 52 * k, b.y - 272 * k, 516 * k, 430 * k); ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1; }
+  // the skull's jaws: sealed with ghost chains until both guns are gone, then the soul fire inside is the weak point
+  const mx = b.x - 39, my = b.y + 4;
+  if (!open){
+    ctx.fillStyle = 'rgba(4,14,14,.88)'; ctx.beginPath(); ctx.ellipse(mx, my, 16, 12, 0, 0, 6.283); ctx.fill();
+    ctx.strokeStyle = '#3fe0b0'; ctx.globalAlpha = .55 + .2 * Math.sin(now * 3); ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(mx - 15, my - 10); ctx.lineTo(mx + 15, my + 10); ctx.moveTo(mx - 15, my + 10); ctx.lineTo(mx + 15, my - 10); ctx.stroke();
+    ctx.beginPath(); ctx.arc(mx, my, 4, 0, 6.283); ctx.stroke(); ctx.globalAlpha = 1;
+  } else {
+    const r = 20 + 3 * Math.sin(t * 10), g = ctx.createRadialGradient(mx, my, 0, mx, my, r);
+    g.addColorStop(0, b.flash > 0 ? '#ffffff' : '#e6fff4'); g.addColorStop(.35, 'rgba(90,255,190,.9)'); g.addColorStop(1, 'rgba(40,220,160,0)');
+    ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(mx, my, r, 0, 6.283); ctx.fill(); ctx.globalCompositeOperation = 'source-over';
+  }
+  // the two guns: the bow cannon and the ghost lantern under the skull, each a pulsing green fire until it is broken
+  for (const c of b.cannons){
+    const cx = b.x + c.dx, cy = b.y + c.dy;
+    if (c.hp <= 0){ ctx.fillStyle = 'rgba(10,14,14,.75)'; ctx.beginPath(); ctx.arc(cx, cy, 8, 0, 6.283); ctx.fill();
+      ctx.fillStyle = 'rgba(160,170,170,.25)'; for (let i = 0; i < 3; i++){ const u = (now * .6 + i / 3) % 1; ctx.beginPath(); ctx.arc(cx + 3 * Math.sin(u * 9 + i), cy - u * 22, 3 + u * 5, 0, 6.283); ctx.fill(); }
+      continue; }
+    const pulse = .6 + .4 * Math.sin(now * 6 + c.dy), g = ctx.createRadialGradient(cx, cy, 0, cx, cy, 14);
+    g.addColorStop(0, b.flash > 0 ? '#ffffff' : '#d8fff0'); g.addColorStop(.4, `rgba(80,255,190,${.85 * pulse})`); g.addColorStop(1, 'rgba(40,220,160,0)');
+    ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, 14, 0, 6.283); ctx.fill(); ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = 'rgba(160,255,220,.7)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(cx, cy, 9 + 2 * pulse, 0, 6.283); ctx.stroke();
+  }
+  ctx.restore();
 }
 function drawFort(b){
+  if (SHIP_IMG.complete && SHIP_IMG.naturalWidth) return drawGhostShip(b);
   const rust = '#d39a5b', hull = '#3a2a20', open = b.cannons.every(c => c.hp <= 0);
   ctx.save();
   // hull with decks and rivets
@@ -1370,7 +1405,7 @@ function drawFort(b){
   if (!open){ ctx.strokeStyle = rust; ctx.lineWidth = 1.5; for (let k = 0; k < 4; k++){ ctx.beginPath(); ctx.moveTo(b.x - 48, b.y - 9 + k * 6); ctx.lineTo(b.x - 30, b.y - 9 + k * 6); ctx.stroke(); } }
   // cannons
   for (const c of b.cannons){
-    const cx = b.x - 40, cy = b.y + c.dy;
+    const cx = b.x + c.dx, cy = b.y + c.dy;
     if (c.hp <= 0){ ctx.fillStyle = '#2a1f18'; ctx.beginPath(); ctx.arc(cx, cy, 10, 0, 6.283); ctx.fill(); continue; }
     const tg = G && G.p, a = tg ? Math.atan2(tg.y - cy, tg.x - cx) : Math.PI;
     ctx.save(); ctx.translate(cx, cy); ctx.rotate(a); ctx.fillStyle = rust; ctx.fillRect(4, -3, 18, 6); ctx.restore();
@@ -2429,7 +2464,7 @@ const TUT_PAGES = [
       <div class="tut-item"><canvas data-fig="en-wall"></canvas><h3>壊せる壁 <small>STAGE 3 ・ 1個20点 ・ 全部で +1000点</small></h3><p>天井から床までふさぐブロックの壁。1個を弾2発で壊せます。黄色いブロックは宝箱で、壊すとカプセルが出ます。1枚の壁を画面から消える前に全部壊すと「WALL CLEAR」で +1000点のボーナス。</p></div>
       <div class="tut-item"><canvas data-fig="en-rear"></canvas><h3>後方機 <small>STAGE 3 ・ 150点</small></h3><p>画面の左（自機の後ろ）から4機で現れ、右へ追い抜いていきます。前ばかり見ていると危険。SNIPER がいると楽に倒せます。</p></div>
     </div>
-    <div class="tut-item"><canvas data-fig="en-fort" style="height:130px"></canvas><h3>STAGE 3 ボス「幽霊戦艦」 <small>砲台 800点 / 撃破 10,000点</small></h3><p>上下の砲台（赤い丸）が3連射でねらってきます。砲台を2つとも壊すと、船体の窓のシャッターが開き、そこが弱点になります。窓を撃ち続けて撃破。戦いの間ずっと後方機を呼ぶので、後ろにも注意。</p></div>
+    <div class="tut-item"><canvas data-fig="en-fort" style="height:130px"></canvas><h3>STAGE 3 ボス「幽霊戦艦」 <small>大砲・鬼火 800点 / 撃破 10,000点</small></h3><p>船首の大砲と、竜の頭骨の下に灯る鬼火（どちらも緑に光る）が3連射でねらってきます。2つとも壊すと、竜の口をふさぐ鎖の封印が解け、口の中の魂の炎が弱点になります。口を撃ち続けて撃破。戦いの間ずっと後方機を呼ぶので、後ろにも注意。</p></div>
     <p class="tut-note">STAGE 3「宇宙ステーション」：段々になった機械の通路。壁を撃ち抜きながら進みます。</p>
     <div class="tut-list two">
       <div class="tut-item"><canvas data-fig="en-ember"></canvas><h3>火山弾 <small>STAGE 4 ・ 50点</small></h3><p>噴出孔が噴いた瞬間に2個飛び出し、放物線を描いて落ちてきます。弾1発で壊せます。</p></div>
@@ -2565,10 +2600,10 @@ const FIGS = {
     const b = { type:'worm', x:hist[79].x, y:hist[79].y, t:0, segs:Array.from({ length:8 }, (_, i) => ({ hp:i === 3 ? 0 : 4 })), hist, flash:0 };
     drawWorm(b); fx.label(b.x - 56, b.y + 4, '頭（弱点）', C.coral); drawLeaf(26, h / 2, 1, false); },
   'en-jelly'(w, h){ const b = { type:'jelly', x:w - 80, y:h / 2 - 8, t:3, flash:0, dead:false }; drawJelly(b); for (let k = 0; k < 8; k++){ const a = k / 8 * 6.283; fx.bullet(b.x - 4 + Math.cos(a) * 58, b.y + 6 + Math.sin(a) * 40); } drawLeaf(30, h / 2, 1, false); },
-  'en-fort'(w, h){ const s = .58, ox = w - 66, oy = h / 2, b = { type:'fort', x:0, y:0, t:0, hp:24, cannons:[{ dy:-64, hp:12 }, { dy:64, hp:0 }], flash:0, dead:false };
+  'en-fort'(w, h){ const s = .58, ox = w - 120, oy = h / 2 + 18, b = { type:'fort', x:0, y:0, t:0, hp:24, cannons:[{ dx:-25, dy:-44, hp:12 }, { dx:-12, dy:36, hp:0 }], flash:0, dead:false };
     ctx.save(); ctx.translate(ox, oy); ctx.scale(s, s); drawFort(b); ctx.restore();
-    fx.label(ox - 40 * s - 30, oy - 64 * s + 4, '砲台', C.coral); fx.label(ox - 40 * s - 30, oy + 64 * s + 4, '破壊', C.mute); fx.label(ox - 39 * s - 26, oy + 4, '窓', C.sun);
-    for (let k = 0; k < 3; k++) fx.bullet(ox - 40 * s - 50 - k * 18, oy - 64 * s + 6 + k * 6); drawLeaf(30, h / 2 + 10, 1, false); },
+    fx.label(ox - 25 * s - 34, oy - 44 * s - 8, '大砲', C.coral); fx.label(ox - 12 * s - 92, oy + 36 * s + 6, '鬼火（破壊）', C.mute); fx.label(ox - 39 * s - 34, oy + 4, '口', C.sun);
+    for (let k = 0; k < 3; k++) fx.bullet(ox - 25 * s - 50 - k * 18, oy - 44 * s + 2 + k * 6); drawLeaf(30, h / 2 + 10, 1, false); },
   'en-boss'(w, h){ const b = { x:w - 70, y:h / 2, t:0, plates:[5, 5, 5], flash:0, dead:false }; drawBoss(b); fx.label(b.x - 48, b.y - 26, '装甲×3', C.edge); fx.label(b.x - 22, b.y + 30, 'コア', C.coral); for (let k = -2; k <= 2; k++){ const a = Math.PI + k * .22; fx.bullet(b.x - 70 + Math.cos(a) * 40, b.y + Math.sin(a) * 40); } drawLeaf(30, h / 2, 1, false); },
   'it-flow'(w, h){
     const y = 26, cw = Math.max(20, Math.min(30, (w - 160) / 6 - 2)), gx = 60;
