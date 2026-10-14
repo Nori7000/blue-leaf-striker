@@ -680,7 +680,7 @@ function makeBoss(type, rush){
     case 'core':  return { type, x:W + 90, y:H / 2, t:0, hp:hp(24), plates:Array(3).fill(hp(5)), cd:2, vol:0, flash:0, dead:false, mk:1 };
     case 'jelly': return { type, x:W + 90, y:H / 2, t:0, hp:hp(24), cd:1.6, wasOpen:false, flash:0, dead:false };
     case 'fort':  return { type, x:W + 110, y:H / 2, t:0, hp:hp(24), cannons:[{ dy:-64, hp:hp(12), cd:1.5 }, { dy:64, hp:hp(12), cd:2.4 }], cd:2, call:4, flash:0, dead:false };
-    case 'worm':  return { type, x:W + 60, y:H / 2, t:0, hp:hp(30), segs:Array.from({ length:rush ? 8 : 10 }, () => ({ hp:rush ? 3 : 4 })), hist:Array.from({ length:80 }, (_, i) => ({ x:W + 60 + (80 - i) * 4, y:H / 2 })), cd:2, flash:0, dead:false };
+    case 'worm':  return { type, x:W + 60, y:H / 2, t:0, hp:hp(42), segs:Array.from({ length:rush ? 8 : 10 }, () => ({ hp:rush ? 3 : 4 })), hist:Array.from({ length:120 }, (_, i) => ({ x:W + 60 + (120 - i) * 4, y:H / 2 })), cd:2, flash:0, dead:false };
     case 'king':  return { type, x:W + 140, y:H / 2, t:0, hp:160, gems:[{ dy:-56, hp:60, cd:1.2 }, { dy:56, hp:60, cd:2.3 }, { dy:-92, hp:60, cd:3.1 }], laser:null, lcd:3.5, rcd:2.5, call:6, flash:0, dead:false };
   }
 }
@@ -910,8 +910,19 @@ function drawVent(v){
 
 /* ---------- boss 4: ヒートワーム (sea worm; only the head takes damage, body segments block shots) ---------- */
 // body segments sit every 22px along the path the head has travelled
+/* the body is a chain of glowing armour rings: one at every segment and one halfway to the next, both belonging to that segment */
+const WORM_GAP = 34;
+function wormRings(b){
+  const segs = wormSegs(b), out = [];
+  segs.forEach((g, i) => {
+    const p = i ? segs[i - 1] : b; // the neighbour toward the head
+    out.push({ x:(g.x + p.x) / 2, y:(g.y + p.y) / 2, a:Math.atan2(p.y - g.y, p.x - g.x), s:g.s });
+    out.push({ x:g.x, y:g.y, a:Math.atan2(p.y - g.y, p.x - g.x), s:g.s });
+  });
+  return out;
+}
 function wormSegs(b){
-  const out = [], H0 = b.hist; let need = 22, acc = 0, i = H0.length - 1, px = b.x, py = b.y;
+  const out = [], H0 = b.hist; let need = WORM_GAP, acc = 0, i = H0.length - 1, px = b.x, py = b.y;
   while (out.length < b.segs.length && i >= 0){
     const q = H0[i], d = Math.hypot(q.x - px, q.y - py);
     if (acc + d >= need){ const f = (need - acc) / d; px += (q.x - px) * f; py += (q.y - py) * f; out.push({ x:px, y:py, s:b.segs[out.length], i:out.length }); acc = 0; continue; }
@@ -933,15 +944,46 @@ function updateWorm(b, dt){
 }
 function shotVsWorm(b, s){
   const hit = (x, y, r) => s.k === 'b' ? Math.abs(s.y - y) < r && s.x >= x - r && s.x - s.len <= x + r : d2(s, { x, y }) < r * r;
-  if (hit(b.x, b.y, 16)) return damageBoss(b, s, dmgOf(s));
-  for (const g of wormSegs(b)){
-    if (g.s.hp <= 0 || !hit(g.x, g.y, 13)) continue;
+  if (hit(b.x, b.y, 22)) return damageBoss(b, s, dmgOf(s));
+  for (const g of wormRings(b)){
+    if (g.s.hp <= 0 || !hit(g.x, g.y, 14)) continue;
     s.dead = true; g.s.hp -= dmgOf(s); b.flash = .03; sfx.hit();
     if (g.s.hp <= 0){ burst(g.x, g.y, '#ff8a3d', 12, .8); G.score += 200; floatText(g.x, g.y - 10, '+200', C.ink, .8, 10); }
     return;
   }
 }
+/* Heat Worm, drawn from Blue Leaf's concept art (img/heatworm.webp: head | ring | tail). Falls back to the old shapes if the
+   image is missing. Broken rings go dark; the head's jaws always turn toward the ship. */
+const WORM_IMG = new Image(); WORM_IMG.src = 'img/heatworm.webp';
+const WORM_K = .155; // art pixels -> game pixels
+function wormDark(){
+  if (artCache.wormDark) return artCache.wormDark;
+  const c = document.createElement('canvas'); c.width = 130; c.height = 248; const x = c.getContext('2d');
+  x.drawImage(WORM_IMG, 504, 0, 130, 248, 0, 0, 130, 248); x.globalCompositeOperation = 'source-atop'; x.fillStyle = 'rgba(20,10,8,.78)'; x.fillRect(0, 0, 130, 248);
+  return artCache.wormDark = c;
+}
+function drawWormSprite(b){
+  const k = WORM_K, rings = wormRings(b), im = WORM_IMG, now = performance.now() / 1000;
+  const glow = (fn) => { fn(); if (b.flash > 0){ ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = .45; fn(); ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1; } };
+  // tail spike at the end of the chain, pointing away from the body
+  const L = rings[rings.length - 1], P = rings[rings.length - 2] || b;
+  ctx.save(); ctx.translate(L.x, L.y); ctx.rotate(Math.atan2(L.y - P.y, L.x - P.x) + 2.37); ctx.scale(k, k);
+  ctx.drawImage(im, 638, 0, 195, 225, -180, -175, 195, 225); ctx.restore();
+  for (let i = rings.length - 1; i >= 0; i--){
+    const g = rings[i]; ctx.save(); ctx.translate(g.x, g.y); ctx.rotate(g.a); ctx.scale(k, k);
+    if (g.s.hp <= 0){ ctx.scale(.86, .86); ctx.drawImage(wormDark(), -65, -124); } // a broken ring, burnt out and shrunk
+    else glow(() => ctx.drawImage(im, 504, 0, 130, 248, -65, -124, 130, 248));
+    ctx.restore();
+  }
+  // head: jaws toward the ship (mirrored rather than upside down when it looks right)
+  const a = G && G.p ? Math.atan2(G.p.y - b.y, G.p.x - b.x) : Math.PI, right = Math.cos(a) > 0;
+  ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(a + Math.PI); if (right) ctx.scale(1, -1);
+  const breathe = 1 + .03 * Math.sin(now * 6); ctx.scale(k * breathe, k);
+  glow(() => ctx.drawImage(im, 0, 0, 500, 420, -235, -222, 500, 420)); // the glowing throat sits on b.x, b.y, where shots come from
+  ctx.restore();
+}
 function drawWorm(b){
+  if (WORM_IMG.complete && WORM_IMG.naturalWidth) return drawWormSprite(b);
   const segs = wormSegs(b);
   for (let i = segs.length - 1; i >= 0; i--){
     const g = segs[i]; if (g.s.hp <= 0){ ctx.fillStyle = 'rgba(255,138,61,.15)'; ctx.beginPath(); ctx.arc(g.x, g.y, 5, 0, 6.283); ctx.fill(); continue; }
@@ -1034,7 +1076,7 @@ function bossWeakPoint(b){
 }
 function bossTouches(b, p){
   if (b.type === 'king') return ((p.x - (b.x + 20)) / 80) ** 2 + ((p.y - b.y) / 110) ** 2 < 1;
-  if (b.type === 'worm') return d2(p, b) < 20 * 20 || wormSegs(b).some(g => g.s.hp > 0 && d2(p, g) < 16 * 16);
+  if (b.type === 'worm') return d2(p, b) < 22 * 22 || wormRings(b).some(g => g.s.hp > 0 && d2(p, g) < 15 * 15);
   if (b.type === 'jelly'){
     const open = jellyOpen(b), S = JS(b), by = b.y - (open ? (b.gate ? 2.5 : 16) : 0) * S;
     if (b.gate && b.form === 3) return d2(p, jellyCore(b)) < (16 * S) ** 2;
