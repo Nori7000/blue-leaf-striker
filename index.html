@@ -681,7 +681,7 @@ function makeBoss(type, rush){
     case 'jelly': return { type, x:W + 90, y:H / 2, t:0, hp:hp(24), cd:1.6, wasOpen:false, flash:0, dead:false };
     case 'fort':  return { type, x:W + 110, y:H / 2, t:0, hp:hp(30), cannons:[{ dx:-25, dy:-44, hp:hp(12), cd:1.5 }, { dx:-12, dy:36, hp:hp(12), cd:2.4 }], cd:2, call:4, flash:0, dead:false };
     case 'worm':  return { type, x:W + 60, y:H / 2, t:0, hp:hp(42), segs:Array.from({ length:rush ? 8 : 10 }, () => ({ hp:rush ? 3 : 4 })), hist:Array.from({ length:120 }, (_, i) => ({ x:W + 60 + (120 - i) * 4, y:H / 2 })), cd:2, flash:0, dead:false };
-    case 'king':  return { type, x:W + 140, y:H / 2, t:0, hp:160, gems:[{ dy:-56, hp:60, cd:1.2 }, { dy:56, hp:60, cd:2.3 }, { dy:-92, hp:60, cd:3.1 }], laser:null, lcd:3.5, rcd:2.5, call:6, flash:0, dead:false };
+    case 'king':  return { type, x:W + 140, y:H / 2, t:0, hp:160, gems:[{ dx:-151, dy:-35, hp:60, cd:1.2 }, { dx:-150, dy:48, hp:60, cd:2.3 }, { dx:-199, dy:-76, hp:60, cd:3.1 }], laser:null, lcd:3.5, rcd:2.5, call:6, flash:0, dead:false };
   }
 }
 function nextRush(){
@@ -1003,7 +1003,7 @@ function drawWorm(b){
 }
 
 
-/* ---------- STAGE 5 final boss: 深海の王 (destroy the three gems, then the opened mouth; dodge the telegraphed laser) ---------- */
+/* ---------- STAGE 5 final boss: 深海の王, a Medusa of machine snakes (destroy three snake heads, then the opened mouth; dodge the telegraphed laser) ---------- */
 const kingMouth = b => ({ x:b.x - 58, y:b.y + 8 });
 const kingOpen = b => b.gems.every(g => g.hp <= 0);
 function updateKing(b, dt){
@@ -1011,7 +1011,7 @@ function updateKing(b, dt){
   b.x += (W - 96 - b.x) * Math.min(1, dt * .8); b.y = H / 2 + 6 + 22 * Math.sin(b.t * .55);
   if (b.x > W - 40) return;
   const open = kingOpen(b), m = kingMouth(b);
-  for (const g of b.gems){ if (g.hp <= 0) continue; g.cd -= dt; if (g.cd <= 0){ g.cd = 2.2; aim(b.x - 48, b.y + g.dy, 165); } }
+  for (const g of b.gems){ if (g.hp <= 0) continue; g.cd -= dt; if (g.cd <= 0){ g.cd = 2.2; aim(b.x + g.dx - 10, b.y + g.dy, 165); } }
   b.call -= dt; if (b.call <= 0){ b.call = open ? 5 : 7; spawn('rear'); }
   if (open){ b.rcd -= dt; if (b.rcd <= 0){ b.rcd = 2.4; for (let k = 0; k < 12; k++){ const a = k / 12 * 6.283 + b.t; G.eb.push({ x:m.x, y:m.y, vx:Math.cos(a) * 120, vy:Math.sin(a) * 120 }); } } }
   // laser: a thin warning line at the ship's height, then a thick beam across the screen
@@ -1025,16 +1025,57 @@ function updateKing(b, dt){
 function shotVsKing(b, s){
   const hit = (x, y, r) => s.k === 'b' ? Math.abs(s.y - y) < r && s.x >= x - r && s.x - s.len <= x + r : d2(s, { x, y }) < r * r;
   for (const g of b.gems){
-    if (g.hp <= 0 || !hit(b.x - 44, b.y + g.dy, 13)) continue;
+    if (g.hp <= 0 || !hit(b.x + g.dx, b.y + g.dy, 16)) continue;
     s.dead = true; g.hp -= dmgOf(s); b.flash = .05; sfx.hit();
-    if (g.hp <= 0){ burst(b.x - 44, b.y + g.dy, '#e6c36a', 26, 1.2); G.score += 1500; floatText(b.x - 44, b.y + g.dy - 14, '+1500', C.sun, 1, 12); if (kingOpen(b)) floatText(W / 2, H / 2 - 50, '口が開いた！', C.coral, 1.6, 16); }
+    if (g.hp <= 0){ burst(b.x + g.dx, b.y + g.dy, '#ff4a5a', 26, 1.2); G.score += 1500; floatText(b.x + g.dx, b.y + g.dy - 14, '+1500', C.sun, 1, 12); if (kingOpen(b)) floatText(W / 2, H / 2 - 50, '口が開いた！', C.coral, 1.6, 16); }
     return;
   }
   const m = kingMouth(b);
   if (kingOpen(b) && hit(m.x, m.y, 15)) return damageBoss(b, s, dmgOf(s));
-  if (((s.x - (b.x + 20)) / 78) ** 2 + ((s.y - b.y) / 108) ** 2 < 1) s.dead = true;
+  const toMouth = Math.abs(s.y - m.y) < 16 && s.x < m.x - 14; // a clear line straight into her mouth
+  if (!toMouth && ((s.x - (b.x - 10)) / 125) ** 2 + ((s.y - (b.y - 20)) / 145) ** 2 < 1) s.dead = true; // the mass of snakes soaks up the rest
+}
+const KING_IMG = new Image(); KING_IMG.src = 'img/medusa.webp'; // Blue Leaf's concept art; her mouth is at 265,282 in the image
+function drawKingSprite(b){
+  const k = .64, open = kingOpen(b), m = kingMouth(b), now = performance.now() / 1000;
+  ctx.save();
+  // laser: a thin warning line at the ship's height, then a golden beam out of her mouth
+  if (b.laser){
+    if (b.laser.t <= 1){ ctx.strokeStyle = '#ffcf6a'; ctx.globalAlpha = .4 + .4 * Math.sin(b.laser.t * 40); ctx.setLineDash([8, 6]); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(m.x, b.laser.y); ctx.lineTo(0, b.laser.y); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1; }
+  }
+  const sway = Math.sin(b.t * 1.1) * 1.5;
+  ctx.drawImage(KING_IMG, m.x - 265 * k, m.y - 282 * k + sway, 536 * k, 470 * k);
+  if (b.flash > 0){ ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = .3; ctx.drawImage(KING_IMG, m.x - 265 * k, m.y - 282 * k + sway, 536 * k, 470 * k); ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1; }
+  if (b.laser && b.laser.t > 1){
+    const y = b.laser.y, g = ctx.createLinearGradient(0, y - 11, 0, y + 11);
+    g.addColorStop(0, 'rgba(255,170,40,0)'); g.addColorStop(.5, 'rgba(255,245,200,.97)'); g.addColorStop(1, 'rgba(255,170,40,0)');
+    ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = g; ctx.fillRect(0, y - 11, m.x, 22);
+    ctx.beginPath(); ctx.moveTo(m.x, m.y); ctx.lineTo(m.x - 30, y - 8); ctx.lineTo(m.x - 30, y + 8); ctx.closePath(); ctx.fillStyle = 'rgba(255,220,120,.7)'; ctx.fill(); ctx.globalCompositeOperation = 'source-over';
+  }
+  // her mouth: held shut by a golden seal until the three heads are gone, then it blazes
+  if (!open){
+    ctx.fillStyle = 'rgba(20,12,6,.85)'; ctx.beginPath(); ctx.ellipse(m.x + 2, m.y, 15, 12, 0, 0, 6.283); ctx.fill();
+    ctx.strokeStyle = '#e6c36a'; ctx.globalAlpha = .7; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.ellipse(m.x + 2, m.y, 15, 12, 0, 0, 6.283); ctx.moveTo(m.x - 13, m.y); ctx.lineTo(m.x + 17, m.y); ctx.stroke(); ctx.globalAlpha = 1;
+  } else {
+    const r = 20 + 4 * Math.sin(b.t * 10), g = ctx.createRadialGradient(m.x, m.y, 0, m.x, m.y, r);
+    g.addColorStop(0, b.flash > 0 ? '#ffffff' : '#fff6d8'); g.addColorStop(.35, 'rgba(255,200,80,.95)'); g.addColorStop(1, 'rgba(255,140,40,0)');
+    ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(m.x, m.y, r, 0, 6.283); ctx.fill(); ctx.globalCompositeOperation = 'source-over';
+  }
+  // the three snake heads that guard her: a burning red mouth while alive, smoke when broken
+  for (const gm of b.gems){
+    const x = b.x + gm.dx, y = b.y + gm.dy;
+    if (gm.hp <= 0){ ctx.fillStyle = 'rgba(8,6,8,.7)'; ctx.beginPath(); ctx.arc(x, y, 14, 0, 6.283); ctx.fill();
+      ctx.fillStyle = 'rgba(150,150,160,.22)'; for (let i = 0; i < 3; i++){ const u = (now * .5 + i / 3) % 1; ctx.beginPath(); ctx.arc(x + 4 * Math.sin(u * 8 + i), y - u * 26, 3 + u * 6, 0, 6.283); ctx.fill(); }
+      continue; }
+    const pulse = .6 + .4 * Math.sin(now * 7 + gm.dy), g = ctx.createRadialGradient(x, y, 0, x, y, 16);
+    g.addColorStop(0, b.flash > 0 ? '#ffffff' : '#ffd6da'); g.addColorStop(.4, `rgba(255,50,70,${.8 * pulse})`); g.addColorStop(1, 'rgba(255,30,50,0)');
+    ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, 16, 0, 6.283); ctx.fill(); ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = 'rgba(255,170,180,.75)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(x, y, 11 + 2 * pulse, 0, 6.283); ctx.stroke();
+  }
+  ctx.restore();
 }
 function drawKing(b){
+  if (KING_IMG.complete && KING_IMG.naturalWidth) return drawKingSprite(b);
   const gold = '#e6c36a', open = kingOpen(b), m = kingMouth(b);
   ctx.save();
   // laser
@@ -1059,7 +1100,7 @@ function drawKing(b){
   ctx.strokeStyle = gold; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(m.x, m.y, 16, open ? 16 : 6, 0, 0, 6.283); ctx.stroke();
   // gems
   for (const g of b.gems){
-    const x = b.x - 44, y = b.y + g.dy;
+    const x = b.x + g.dx, y = b.y + g.dy;
     if (g.hp <= 0){ ctx.fillStyle = '#2a2240'; ctx.beginPath(); ctx.arc(x, y, 8, 0, 6.283); ctx.fill(); continue; }
     ctx.fillStyle = b.flash > 0 ? C.ink : '#7fe0ff'; ctx.beginPath(); ctx.moveTo(x, y - 13); ctx.lineTo(x + 11, y); ctx.lineTo(x, y + 13); ctx.lineTo(x - 11, y); ctx.closePath(); ctx.fill();
     ctx.strokeStyle = gold; ctx.lineWidth = 2; ctx.stroke();
@@ -1072,12 +1113,12 @@ const BOSS_NAME = { core:'コア', jelly:'深淵クラゲ', fort:'幽霊戦艦',
 function bossWeakPoint(b){
   if (b.type === 'jelly') return jellyCore(b);
   if (b.type === 'worm') return { x:b.x, y:b.y };
-  if (b.type === 'king'){ const g = b.gems.find(g => g.hp > 0); return g ? { x:b.x - 44, y:b.y + g.dy } : kingMouth(b); }
+  if (b.type === 'king'){ const g = b.gems.find(g => g.hp > 0); return g ? { x:b.x + g.dx, y:b.y + g.dy } : kingMouth(b); }
   if (b.type === 'fort'){ const c = b.cannons.find(c => c.hp > 0); return c ? { x:b.x + c.dx, y:b.y + c.dy } : { x:b.x - 40, y:b.y + 2 }; }
   const i = b.plates.findIndex(v => v > 0); return i >= 0 ? { x:plateX(b, i), y:b.y } : { x:b.x, y:b.y };
 }
 function bossTouches(b, p){
-  if (b.type === 'king') return ((p.x - (b.x + 20)) / 80) ** 2 + ((p.y - b.y) / 110) ** 2 < 1;
+  if (b.type === 'king') return ((p.x - (b.x - 5)) / 115) ** 2 + ((p.y - (b.y - 20)) / 140) ** 2 < 1;
   if (b.type === 'worm') return d2(p, b) < 22 * 22 || wormRings(b).some(g => g.s.hp > 0 && d2(p, g) < 15 * 15);
   if (b.type === 'jelly'){
     const open = jellyOpen(b), S = JS(b), by = b.y - (open ? (b.gate ? 2.5 : 16) : 0) * S;
@@ -2499,7 +2540,7 @@ const TUT_PAGES = [
       <div class="tut-item"><canvas data-fig="en-worm"></canvas><h3>STAGE 4 ボス「ヒートワーム」 <small>撃破 10,000点</small></h3><p>画面を大きく泳ぎ回る、体の長い海の虫。弱点は先頭の頭だけで、胴体の節は弾を防ぎます（節は壊せて200点）。頭から3方向にねらい撃ち。胴体にふれてもミス。頭を撃ち続けて撃破。</p></div>
     </div>
     <p class="tut-note">STAGE 4「熱水噴出孔」：ギザギザの岩場。噴出孔の合図を見て、噴くタイミングをよけて進みます。</p>
-    <div class="tut-item"><canvas data-fig="en-king" style="height:150px"></canvas><h3>STAGE 5 最終ボス「深海の王」 <small>宝石 1,500点 / 撃破 30,000点</small></h3><p>まず顔の前の宝石3つ（青いひし形）を壊すと、口が開いて弱点になります。口を撃ち続けて撃破。ときどき自機の高さに赤い点線が出たら、1秒後にそこへ太いレーザー。上下に動いてよけましょう。口が開くと全方向弾も加わります。</p></div>
+    <div class="tut-item"><canvas data-fig="en-king" style="height:150px"></canvas><h3>STAGE 5 最終ボス「深海の王」 <small>蛇の頭 1,500点 / 撃破 30,000点</small></h3><p>まず赤く光る蛇の頭3つを壊すと、金の封印が解けて口が開き、弱点になります。口を撃ち続けて撃破。ときどき自機の高さに金色の点線が出たら、1秒後に口からそこへ太いレーザー。上下に動いてよけましょう。口が開くと全方向弾も加わります。</p></div>
     <p class="tut-note">STAGE 5「深海の玉座」：短い道中のあと「ボスラッシュ」。コア → 深淵クラゲ → 幽霊戦艦 → ヒートワーム（少し弱くなっています、1体5,000点）と連続で戦い、最後に深海の王が現れます。</p>` },
   { tab:'アイテム', html:`
     <div class="tut-item"><h3>AUTO と MANUAL</h3><p>アイテムの使い方は2種類。タイトル画面（または一時停止中）で切り替えられます。最初は AUTO です。</p>${modeBlock()}</div>
@@ -2608,9 +2649,9 @@ const FIGS = {
   'en-dash'(w, h){ const ly = h / 2 + 14; drawLeaf(34, ly, 1, false); drawEnemy({ kind:'dash', x:w - 40, y:16, vx:-210, vy:Math.max(-140, (ly - 16) / ((w - 74) / 210)), t:0 }); fx.dots(w - 52, 20, 52, ly - 2, C.coral); },
   'en-carrier'(w, h){ drawEnemy({ kind:'carrier', x:w * .35, y:h / 2, t:.3 }); fx.label(w * .35, h / 2 + 30, '弾4発', C.mute); fx.arrow(w * .35 + 26, h / 2, w * .62); fx.cap(w * .72, h / 2); },
   'en-turret'(w, h){ const fy = h - 12; fx.ground(w, fy, false); const leaf = { x:40, y:20 }; drawLeaf(leaf.x, leaf.y, 1, false); const t = { kind:'tur', x:w * .7, y:fy - 6, top:false, t:0, aimAt:leaf }; drawEnemy(t); fx.bullet(w * .48, (leaf.y + t.y) / 2 + 4); fx.dots(w * .7 - 10, fy - 12, 52, 24, C.coral); },
-  'en-king'(w, h){ const s = .52, ox = w - 52, oy = h / 2 + 12, b = { type:'king', x:0, y:0, t:0, hp:40, gems:[{ dy:-56, hp:15 }, { dy:56, hp:0 }, { dy:-92, hp:15 }], laser:null, flash:0, dead:false };
+  'en-king'(w, h){ const s = .45, ox = w - 52, oy = h / 2 + 12, b = { type:'king', x:0, y:0, t:0, hp:40, gems:[{ dx:-151, dy:-35, hp:15 }, { dx:-150, dy:48, hp:0 }, { dx:-199, dy:-76, hp:15 }], laser:null, flash:0, dead:false };
     ctx.save(); ctx.translate(ox, oy); ctx.scale(s, s); drawKing(b); ctx.restore();
-    fx.label(ox - 44 * s - 28, oy - 56 * s + 4, '宝石', '#7fe0ff'); const my = oy + 8 * s; fx.label(ox - 58 * s, my + 22, '口（弱点）', C.coral); ctx.strokeStyle = C.coral; ctx.setLineDash([8, 6]); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(ox - 58 * s - 12, my); ctx.lineTo(50, my); ctx.stroke(); ctx.setLineDash([]); fx.label(w * .4, my - 8, 'レーザーの予告', C.coral);
+    fx.label(ox - 199 * s - 40, oy - 76 * s + 4, '蛇の頭', '#ff8a96'); const my = oy + 8 * s; fx.label(ox - 58 * s - 120, my + 24, '口（弱点）', C.coral); ctx.strokeStyle = C.coral; ctx.setLineDash([8, 6]); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(ox - 58 * s - 12, my); ctx.lineTo(50, my); ctx.stroke(); ctx.setLineDash([]); fx.label(w * .4, my - 8, 'レーザーの予告', C.coral);
     drawLeaf(28, oy + 8 * s, 1, false); },
   'die-vent'(w, h){ const fy = h - 10; ctx.fillStyle = '#24120f'; ctx.fillRect(0, fy, w, 20); ctx.strokeStyle = '#ff8a3d'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(0, fy); ctx.lineTo(w, fy); ctx.stroke();
     const x = w * .55; ctx.fillStyle = '#3a1d16'; ctx.beginPath(); ctx.moveTo(x - 15, fy); ctx.lineTo(x - 8, fy - 14); ctx.lineTo(x + 8, fy - 14); ctx.lineTo(x + 15, fy); ctx.closePath(); ctx.fill(); ctx.stroke();
