@@ -677,7 +677,7 @@ function spawn(type){
 function makeBoss(type, rush){
   const k = rush ? 1.6 : 4, hp = n => Math.max(1, Math.round(n * k)); // 4x the original toughness; anger (below) makes up the rest
   switch (type){
-    case 'core':  return { type, x:W + 90, y:H / 2, t:0, hp:hp(24), plates:Array(3).fill(hp(5)), cd:2, vol:0, flash:0, dead:false, mk:1 };
+    case 'core':  return { type, x:W + 90, y:H / 2, t:0, hp:hp(21), plates:Array(3).fill(hp(5)), cd:2, vol:0, flash:0, dead:false, mk:1 };
     case 'jelly': return { type, x:W + 90, y:H / 2, t:0, hp:hp(24), cd:1.6, wasOpen:false, flash:0, dead:false };
     case 'fort':  return { type, x:W + 110, y:H / 2, t:0, hp:hp(30), cannons:[{ dx:-25, dy:-44, hp:hp(12), cd:1.5 }, { dx:-12, dy:36, hp:hp(12), cd:2.4 }], cd:2, call:4, flash:0, dead:false };
     case 'worm':  return { type, x:W + 60, y:H / 2, t:0, hp:hp(42), segs:Array.from({ length:rush ? 8 : 10 }, () => ({ hp:rush ? 3 : 4 })), hist:Array.from({ length:120 }, (_, i) => ({ x:W + 60 + (120 - i) * 4, y:H / 2 })), cd:2, flash:0, dead:false };
@@ -826,8 +826,8 @@ function updateBoss(dt){
   if (b.mk === 3 && b.x < W - 60){ b.call -= dt; if (b.call <= 0){ b.call = 5; spawn('rear'); } }
   b.flash = Math.max(0, b.flash - dt); b.cd -= dt;
   if (b.cd <= 0 && b.x < W - 60){
-    b.vol++; b.cd = b.mk === 2 ? 1.05 : b.mk === 3 ? 1.2 : 1.3; const cx = b.x - 14, sp = b.mk === 2 ? 3 : 2;
-    if (b.vol % 3 === 0) for (let k = -1; k <= 1; k++) aim(cx, b.y + k * 16, 170);
+    b.vol++; b.cd = b.mk === 2 ? 1.05 : b.mk === 3 ? 1.2 : 1.3; const cx = b.x - 54, sp = b.mk === 2 ? 3 : 2;
+    if (b.vol % 3 === 0) for (let k = -1; k <= 1; k++) aim(b.x - (k ? 90 : 55), b.y + k * 48, 170); // the two gun arms and the channel
     else for (let k = -sp; k <= sp; k++){ const a = Math.PI + k * .22; G.eb.push({ x:cx, y:b.y, vx:Math.cos(a) * 150, vy:Math.sin(a) * 150 }); }
   }
 }
@@ -847,14 +847,16 @@ function shotVsBoss(s){
       return;
     }
   }
-  const cx = b.x - 22, dx = s.x - cx, dy = s.y - b.y;
-  const coreHit = s.k === 'b' ? (Math.abs(dy) < 11 && s.x >= cx - 9 && s.x - s.len <= cx + 9) : dx * dx + dy * dy < 144;
+  const cx = b.x, dx = s.x - cx, dy = s.y - b.y;
+  const coreHit = s.k === 'b' ? (Math.abs(dy) < 12 && s.x >= cx - 10 && s.x - s.len <= cx + 10) : dx * dx + dy * dy < 13 * 13;
   if (coreHit){
     s.dead = true;
     if (b.plates.every(v => v <= 0)){ b.hp -= dmgOf(s); b.flash = .08; sfx.hit(); if (b.hp <= 0) killBoss(); }
     return;
   }
-  const bx = s.x - (b.x + 14); if (bx * bx + dy * dy < 1600) s.dead = true;
+  // the machine soaks up shots, except along the open channel that leads to the core
+  const inChannel = Math.abs(dy) < 17 && s.x < cx;
+  if ((dx * dx + dy * dy < 65 * 65 && !inChannel) || coreArms(b).some(q => d2(s, q) < 22 * 22)) s.dead = true;
 }
 function hitBlock(k, dmg){
   k.hp -= dmg; sfx.hit();
@@ -1072,7 +1074,7 @@ function bossWeakPoint(b){
   if (b.type === 'worm') return { x:b.x, y:b.y };
   if (b.type === 'king'){ const g = b.gems.find(g => g.hp > 0); return g ? { x:b.x - 44, y:b.y + g.dy } : kingMouth(b); }
   if (b.type === 'fort'){ const c = b.cannons.find(c => c.hp > 0); return c ? { x:b.x + c.dx, y:b.y + c.dy } : { x:b.x - 40, y:b.y + 2 }; }
-  const i = b.plates.findIndex(v => v > 0); return i >= 0 ? { x:plateX(b, i), y:b.y } : { x:b.x - 22, y:b.y };
+  const i = b.plates.findIndex(v => v > 0); return i >= 0 ? { x:plateX(b, i), y:b.y } : { x:b.x, y:b.y };
 }
 function bossTouches(b, p){
   if (b.type === 'king') return ((p.x - (b.x + 20)) / 80) ** 2 + ((p.y - b.y) / 110) ** 2 < 1;
@@ -1089,8 +1091,7 @@ function bossTouches(b, p){
     if (((p.x - (b.x - 38)) / 34) ** 2 + ((p.y - (b.y + 5)) / 30) ** 2 < 1) return true;        // the dragon skull on the bow
     return b.cannons.some(c => c.hp > 0 && d2(p, { x:b.x + c.dx, y:b.y + c.dy }) < 16 * 16);
   }
-  const dx = p.x - (b.x + 14), dy = p.y - b.y;
-  return dx * dx + dy * dy < 44 * 44 || (Math.abs(dy) < 20 && p.x > plateX(b, 0) - 6 && p.x < b.x);
+  return d2(p, b) < 63 * 63 || coreArms(b).some(q => d2(p, q) < 20 * 20);
 }
 function damageBoss(b, s, dmg){
   s.dead = true; b.hp -= dmg; b.flash = .08; sfx.hit();
@@ -1415,7 +1416,8 @@ function drawFort(b){
   ctx.restore();
 }
 
-const plateX = (b, i) => b.x - 38 - (b.plates.length - 1 - i) * 10;
+const plateX = (b, i) => b.x - 34 - (b.plates.length - 1 - i) * 9; // shutters across the channel, in front of the core
+const coreArms = b => [{ x:b.x - 70, y:b.y - 43 }, { x:b.x - 70, y:b.y + 43 }, { x:b.x - 22, y:b.y - 90 }, { x:b.x - 22, y:b.y + 90 }]; // the gun arms
 function killBoss(){
   const b = G.boss; b.dead = true; G.shake = 1.2; sfx.boss(); burst(b.x, b.y, C.coral, 60, 2); G.eb.length = 0;
   if (G.rush && G.rush.length){
@@ -2028,13 +2030,39 @@ function drawEnemy(e){
   }
   ctx.restore();
 }
+/* the Core is Blue Leaf's concept art (img/core.webp, the core itself at 218,222 in the image). The three armour plates are red
+   energy shutters across the dark channel that runs from the front of the machine to the core. */
+const CORE_IMG = new Image(); CORE_IMG.src = 'img/core.webp';
+function drawCoreSprite(b){
+  const k = .45, now = performance.now() / 1000, open = b.plates.every(v => v <= 0), edge = b.mk >= 2 ? (BOSS_EDGE[b.mk] || '#ff4060') : '#ff3050';
+  ctx.save(); ctx.translate(b.x, b.y);
+  ctx.save(); ctx.rotate(Math.sin(b.t * .7) * .05); // a slow sway, like it is turning in place
+  ctx.drawImage(CORE_IMG, -218 * k, -222 * k, 425 * k, 450 * k);
+  if (b.flash > 0){ ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = .35; ctx.drawImage(CORE_IMG, -218 * k, -222 * k, 425 * k, 450 * k); ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1; }
+  ctx.restore();
+  // the core: dimmed behind its shutters, blazing when they are gone
+  const r = open ? 16 + 3 * Math.sin(b.t * 10) : 10, g = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+  g.addColorStop(0, b.flash > 0 && open ? '#ffffff' : '#ffe6f0'); g.addColorStop(.35, open ? 'rgba(255,60,140,.95)' : 'rgba(255,60,140,.35)'); g.addColorStop(1, 'rgba(255,40,100,0)');
+  ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, r, 0, 6.283); ctx.fill(); ctx.globalCompositeOperation = 'source-over';
+  // the channel and its shutters
+  const full = b.mk >= 2 ? 6 : 5;
+  b.plates.forEach((hp, i) => {
+    if (hp <= 0) return;
+    const x = plateX(b, i) - b.x, a = .45 + .55 * hp / full, fl = .8 + .2 * Math.sin(now * 12 + i);
+    ctx.fillStyle = 'rgba(20,6,10,.85)'; ctx.fillRect(x - 3, -15, 6, 30);
+    ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = edge; ctx.globalAlpha = a * fl; ctx.fillRect(x - 2, -14, 4, 28);
+    ctx.fillStyle = '#ffd0dc'; ctx.globalAlpha = a * .8; ctx.fillRect(x - .6, -13, 1.2, 26); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+  });
+  ctx.restore();
+}
 function drawBoss(b){
   if (b.dead) return;
   if (b.type === 'jelly') return drawJelly(b);
   if (b.type === 'worm') return drawWorm(b);
   if (b.type === 'king') return drawKing(b);
   if (b.type === 'fort') return drawFort(b);
-  ctx.save(); ctx.translate(b.x, b.y);
+  if (CORE_IMG.complete && CORE_IMG.naturalWidth) return drawCoreSprite(b);
+  ctx.save(); ctx.translate(b.x + 36, b.y); // the old look, only when the image is missing
   ctx.fillStyle = C.deep; ctx.strokeStyle = b.flash > 0 ? C.ink : (BOSS_EDGE[b.mk] || C.edge); ctx.lineWidth = 3;
   ctx.beginPath(); for (let i = 0; i < 6; i++){ const a = i / 6 * 6.283; ctx[i ? 'lineTo' : 'moveTo'](14 + Math.cos(a) * 44, Math.sin(a) * 44); }
   ctx.closePath(); ctx.fill(); ctx.stroke();
@@ -2457,7 +2485,7 @@ const TUT_PAGES = [
       <div class="tut-item"><canvas data-fig="en-carrier"></canvas><h3>運び屋 <small>200点</small></h3><p>黄色い六角形。弾4発で倒せて、倒すと必ずカプセルを落とします。</p></div>
       <div class="tut-item"><canvas data-fig="en-turret"></canvas><h3>砲台 <small>300点</small></h3><p>天井や床に付いていて、自機をねらって撃ってきます。弾2発で倒せます。</p></div>
     </div>
-    <div class="tut-item"><canvas data-fig="en-boss" style="height:110px"></canvas><h3>STAGE 1 ボス「コア」 <small>装甲 500点 / 撃破 10,000点</small></h3><p>前にある3枚の装甲（青緑の板）を壊すと、中心の赤いコアに弾が届くようになります。コアを撃ち続けると撃破。5方向に広がる弾と、自機をねらう弾を交互に撃ってきます。</p></div>
+    <div class="tut-item"><canvas data-fig="en-boss" style="height:110px"></canvas><h3>STAGE 1 ボス「コア」 <small>装甲 500点 / 撃破 10,000点</small></h3><p>正面のみぞをふさぐ3枚の赤い装甲を壊すと、中心で光るコアに弾が届くようになります（みぞ以外は硬い機体に防がれます）。コアを撃ち続けると撃破。5方向に広がる弾と、自機をねらう弾を交互に撃ってきます。</p></div>
     <div class="tut-item"><canvas data-fig="en-jelly" style="height:120px"></canvas><h3>STAGE 2 門番「深淵クラゲ」 <small>撃破 10,000点</small></h3><p>無料で遊べる最後の、そして最初の本当の壁。弱点は体の中の赤い核で、かさが開いて「OPEN」と出ている間だけ弾が届きます。触手からは曲がりながら戻ってくる弾。体力が減ると姿を変え、画面を横切る電撃の膜（点線が光ったら1秒後に発生）や、かさを捨てて暴れる最終形態に。倒し方は、自分で見つけてください。</p></div>
     <p class="tut-note">STAGE 2「深海の裂け目」：洞窟がせまくなり、砲台が増えます。中心が白い編隊は弾を撃ってきます。</p>
     <div class="tut-list two">
@@ -2604,7 +2632,9 @@ const FIGS = {
     ctx.save(); ctx.translate(ox, oy); ctx.scale(s, s); drawFort(b); ctx.restore();
     fx.label(ox - 25 * s - 34, oy - 44 * s - 8, '大砲', C.coral); fx.label(ox - 12 * s - 92, oy + 36 * s + 6, '鬼火（破壊）', C.mute); fx.label(ox - 39 * s - 34, oy + 4, '口', C.sun);
     for (let k = 0; k < 3; k++) fx.bullet(ox - 25 * s - 50 - k * 18, oy - 44 * s + 2 + k * 6); drawLeaf(30, h / 2 + 10, 1, false); },
-  'en-boss'(w, h){ const b = { x:w - 70, y:h / 2, t:0, plates:[5, 5, 5], flash:0, dead:false }; drawBoss(b); fx.label(b.x - 48, b.y - 26, '装甲×3', C.edge); fx.label(b.x - 22, b.y + 30, 'コア', C.coral); for (let k = -2; k <= 2; k++){ const a = Math.PI + k * .22; fx.bullet(b.x - 70 + Math.cos(a) * 40, b.y + Math.sin(a) * 40); } drawLeaf(30, h / 2, 1, false); },
+  'en-boss'(w, h){ const b = { x:w - 70, y:h / 2, t:0, plates:[5, 5, 5], flash:0, dead:false };
+    ctx.save(); ctx.translate(b.x, b.y); ctx.scale(.5, .5); ctx.translate(-b.x, -b.y); drawBoss(b); ctx.restore();
+    fx.label(b.x - 78, b.y - 22, '装甲×3', C.edge); fx.label(b.x - 74, b.y + 30, 'コア（中心）', C.coral); for (let k = -2; k <= 2; k++){ const a = Math.PI + k * .22; fx.bullet(b.x - 70 + Math.cos(a) * 40, b.y + Math.sin(a) * 40); } drawLeaf(30, h / 2, 1, false); },
   'it-flow'(w, h){
     const y = 26, cw = Math.max(20, Math.min(30, (w - 160) / 6 - 2)), gx = 60;
     fx.cap(18, y); fx.label(18, y + 22, '取る', C.sun);
