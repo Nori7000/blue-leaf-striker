@@ -1186,12 +1186,14 @@ function sniperTarget(s){
 const inBoss = () => G && G.boss && !G.bossDead && G.bossT0 != null;
 function killPlayer(){
   const p = G.p; burst(p.x, p.y, C.leaf, 40, 1.4); sfx.die(); G.shake = .5; if (inBoss()) G.bossHits++;
+  G.hurt = { t:.9, m:.9, kill:true };
   G.p = null; G.gauge = -1; G.respawn = 1.6; updatePanel();
 }
 function hurtPlayer(){
   const p = G.p; if (!p || p.inv > 0) return;
   if (p.shield > 0){
     p.shield--; p.inv = .6; sfx.hit(); updatePanel(); if (inBoss()) G.bossHits++;
+    G.hurt = { t:1.1, m:1.1, n:p.shield, max:SHIPS[p.ship].shield }; G.shake = Math.max(G.shake, .3); burst(p.x, p.y, '#ff6a5a', 14, .8);
     if (p.ship === 'lance'){ for (const b of G.eb) if (d2(b, p) < 70 * 70){ b.dead = true; burst(b.x, b.y, '#ffd27a', 3, .4); } G.shake = .2; G.ring = { x:p.x, y:p.y, at:performance.now() }; }
     return;
   }
@@ -2006,7 +2008,11 @@ function update(dt){
 
   const bk = bulletK();
   for (const b of G.eb){ if (b.turn){ const c = Math.cos(b.turn * dt), sn = Math.sin(b.turn * dt), vx = b.vx; b.vx = vx * c - b.vy * sn; b.vy = vx * sn + b.vy * c; } b.x += b.vx * dt * bk; b.y += b.vy * dt * bk; if (b.x < -10 || b.x > W + 10 || b.y < -10 || b.y > H + 10) b.dead = true; }
-  for (const c of G.caps){ c.t += dt; c.x -= 50 * dt; if (c.x < -20) c.dead = true; }
+  for (const c of G.caps){
+    c.t += dt; c.x -= 50 * dt; if (c.x < -20) c.dead = true;
+    const wx = c.x + G.scroll, lo = Math.max(14, ceilY(wx) + 14), hi = Math.min(H - 14, floorY(wx) - 14); // keep it inside the passage, where it can be picked up
+    if (hi > lo) c.y += (Math.max(lo, Math.min(hi, c.y)) - c.y) * Math.min(1, dt * 12);
+  }
 
   const p = G.p;
   if (p){
@@ -2030,7 +2036,7 @@ function update(dt){
   for (const q of G.parts){ q.l -= dt; q.x += (q.vx || 0) * dt; q.y += (q.vy || 0) * dt; if (q.vx){ q.vx *= .96; q.vy *= .96; } }
   G.shots = G.shots.filter(o => !o.dead); G.en = G.en.filter(o => !o.dead); G.eb = G.eb.filter(o => !o.dead);
   G.caps = G.caps.filter(o => !o.dead); G.blocks = G.blocks.filter(o => !o.dead); G.vents = G.vents.filter(o => !o.dead); G.parts = G.parts.filter(o => o.l > 0);
-  for (const s of G.texts){ s.l -= dt; s.y -= 22 * dt; } G.texts = G.texts.filter(s => s.l > 0); if (G.hint > 0) G.hint -= dt;
+  for (const s of G.texts){ s.l -= dt; s.y -= 22 * dt; } G.texts = G.texts.filter(s => s.l > 0); if (G.hint > 0) G.hint -= dt; if (G.hurt){ G.hurt.t -= dt; if (G.hurt.t <= 0) G.hurt = null; }
   if (G.banner > 0) G.banner -= dt;
   if (G.bossBanner > 0){ G.bossBanner -= dt; if (G.bossBanner > .6) G.shake = Math.max(G.shake, .12); }
   if (G.flashT > 0){ G.flashT -= dt; if (G.flashT <= 0) updatePanel(); }
@@ -2577,6 +2583,28 @@ function drawStageCard(){
   ctx.font = '500 12px ' + fb; ctx.fillStyle = C.ink; ctx.fillText(st.warn, vx, y + 78); ctx.fillText(st.boss, vx, y + 95);
   ctx.restore();
 }
+/* hit feedback: a red flash around the screen edge, and over the ship the shield left (pips; the one just lost cracks) */
+function drawHurt(){
+  const h = G.hurt; if (!h) return;
+  const k = h.t / h.m, a = Math.min(1, k * 1.6), fm = getComputedStyle(document.documentElement).getPropertyValue('--f-mono');
+  const v = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * .35, W / 2, H / 2, Math.max(W, H) * .7);
+  v.addColorStop(0, 'rgba(255,40,40,0)'); v.addColorStop(1, `rgba(255,40,40,${(h.kill ? .6 : .45) * a})`);
+  ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
+  if (h.kill || !G.p) return;
+  const p = G.p, rise = (1 - k) * 8, y = Math.max(28, p.y - 30 - rise), x = Math.max(60, Math.min(W - 60, p.x));
+  ctx.save(); ctx.globalAlpha = a; ctx.textAlign = 'center';
+  const label = h.n > 0 ? `バリア 残り ${h.n}` : 'バリア なし！';
+  ctx.font = '800 13px ' + fm; ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.75)'; ctx.strokeText(label, x, y);
+  ctx.fillStyle = h.n > 0 ? '#ffe08a' : '#ff5a4a'; ctx.fillText(label, x, y);
+  const n = h.max, gap = 11, x0 = x - (n - 1) * gap / 2;
+  for (let i = 0; i < n; i++){
+    const cx = x0 + i * gap, cy = y + 11;
+    if (i < h.n){ ctx.fillStyle = p.ship === 'lance' ? '#ffd27a' : C.leaf; ctx.beginPath(); ctx.arc(cx, cy, 4, 0, 6.283); ctx.fill(); }
+    else if (i === h.n){ const sh = (1 - k) * 4; ctx.strokeStyle = '#ff6a5a'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(cx - 4 - sh, cy - 4); ctx.lineTo(cx + 4 + sh, cy + 4); ctx.moveTo(cx + 4 + sh, cy - 4); ctx.lineTo(cx - 4 - sh, cy + 4); ctx.stroke(); }
+    else { ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(cx, cy, 3.5, 0, 6.283); ctx.stroke(); }
+  }
+  ctx.restore();
+}
 function draw(){
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
   if (G && G.shake > 0) ctx.translate((Math.random() - .5) * 8 * G.shake, (Math.random() - .5) * 8 * G.shake);
@@ -2667,6 +2695,7 @@ function draw(){
   ctx.textAlign = 'center'; ctx.font = '700 11px ' + mono;
   for (const s of G.texts){ ctx.globalAlpha = Math.min(1, s.l / .4); ctx.fillStyle = s.c; ctx.font = '700 ' + (s.size || 11) + 'px ' + mono; const half = ctx.measureText(s.s).width / 2 + 6; ctx.fillText(s.s, Math.max(half, Math.min(W - half, s.x)), s.y); }
   ctx.globalAlpha = 1;
+  drawHurt();
   if (G.banner > 0) drawStageCard();
   if (G.rushN > 0 && G.boss && !G.bossDead){
     ctx.textAlign = 'center'; ctx.fillStyle = C.sun; ctx.font = '700 11px ' + getComputedStyle(document.documentElement).getPropertyValue('--f-mono');
