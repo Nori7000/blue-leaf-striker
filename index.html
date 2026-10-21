@@ -320,14 +320,17 @@ const STAGES = {
    base: which main stage the terrain/enemy behaviour is borrowed from (1-4), boss: core | jelly | fort | worm */
 const MONTHLY = {
   '2026-10': {
-    title:'10月：ランタン海溝', short:'ランタン海溝', base:2,
-    look:{ reef:'#2a1630', edge:'#ff9a3c' },
-    order:['fan','rear','carrier','fanLow','turrets','fan','carrier','rear','dash','fanLow','carrier','turrets','rear'],
-    endT:70, boss:'jelly', bossName:'パンプキン・ジェリー',
-    tint:{ bell:'rgba(255,140,40,.55)', line:'#ffc27a', tent:'#ff9a3c' },
+    title:'10月：クラーケンの海', short:'クラーケンの海', base:2,
+    look:{ reef:'#3a2414', edge:'#d9a35a' },
+    // the stage starts on the deck of a huge ship; at breakT the Kraken drags it under and the rest is fought under water
+    kraken:{ breakT:34 },
+    swim:{ sink:26, current:-12 },
+    order:['fan','tent','dash','fanLow','tents','carrier','tent','fan','rear','tents','carrier','tent'],
+    order2:['fan','carrier','rear','dash','fanLow','carrier','fan','rear','dash','carrier'],
+    endT:64, boss:'kraken', bossName:'クラーケン',
     lives:0, capsX2:true, startItems:['SPEED'],
-    tag:'1機勝負',
-    rule:'残機なしの1機勝負。そのかわりカプセルが2倍出て、最初から SPEED が1段階付いています。'
+    tag:'甲板の触手 ・ 船が沈む',
+    rule:'巨大な船の甲板から出撃。甲板を突き破る触手をかわし、船が沈んだら海中へ。最後はクラーケン本体との戦い。残機なしの1機勝負。そのかわりカプセルが2倍出て、最初から SPEED が1段階付いています。'
   },
   '2026-11': {
     title:'11月：うねる海底トンネル', short:'海底トンネル', base:1,
@@ -369,6 +372,12 @@ function tunnelAt(wx, segs){
   return { top:0, bot:H };
 }
 const tunnelCfg = () => G && G.mcfg && G.mcfg.tunnel;
+/* Kraken stage (monthly): 'deck' on the ship, 'sink' while the ship goes down (3.5 s), then 'sea' under water */
+const krakenCfg = () => G && G.mcfg && G.mcfg.kraken;
+const SINK_T = 3.5;
+const kPhase = () => { const k = krakenCfg(); return !k ? null : G.t < k.breakT ? 'deck' : G.t < k.breakT + SINK_T ? 'sink' : 'sea'; };
+const DECK_Y = H - 58;
+const swimCfg = () => G && G.mcfg && G.mcfg.swim && (!krakenCfg() || kPhase() === 'sea') ? G.mcfg.swim : null;
 /* painted walls (stages 1, 2, 4, 5): ceiling and floor strips cut from Blue Leaf's own concept art (img/wallN.webp, the
    ceiling strip on top, the floor strip under it). Each strip repeats, every other copy mirrored, so the joins match.
    The rock outline, measured every 2 art pixels, is the hit line; hanging vines are only drawn, flying through them is safe.
@@ -378,7 +387,7 @@ const WALL_SCALE = { 1:.4, 2:.35, 4:.4, 5:.4 }; // art pixels -> game pixels (st
 const WALL_IMG = {};
 for (const k in WALLS){ const w = WALLS[k]; w.s = WALL_SCALE[k]; w.tmax = Math.max(...w.top); w.bmax = Math.max(...w.bot); }
 function wallImg(k){ if (!WALL_IMG[k]){ WALL_IMG[k] = new Image(); WALL_IMG[k].src = `img/wall${k}.webp`; } return WALL_IMG[k]; }
-const painted = () => !tunnelCfg() && WALLS[stg()] ? WALLS[stg()] : null;
+const painted = () => !tunnelCfg() && !krakenCfg() && WALLS[stg()] ? WALLS[stg()] : null;
 const wallCol = (wx, w, S) => { const u = wx / S, p = ((u % (2 * w)) + 2 * w) % (2 * w); return p < w ? p : 2 * w - p; };
 function wallDepth(wx, top){
   const a = painted(), prof = top ? a.top : a.bot, c = wallCol(wx, top ? a.tw : a.bw, a.s) / 2, i = Math.min(prof.length - 1, Math.floor(c)), j = Math.min(prof.length - 1, i + 1), f = c - Math.floor(c);
@@ -386,8 +395,10 @@ function wallDepth(wx, top){
   return Math.max(0, d - (1 - TA) * (top ? a.tmax : a.bmax) * a.s);
 }
 const stepQ = v => Math.round(v / 12) * 12;
+const seabedY = wx => H - TA * (22 + 16 * (1 + Math.sin(wx * .007)) * .5 + 9 * Math.sin(wx * .023 + 1));
 const tri = v => Math.abs((((v % 1) + 1) % 1) * 2 - 1); // 0..1 sawtooth-like triangle wave for jagged rock
-const ceilBase  = wx => tunnelCfg() ? tunnelAt(wx, G.mcfg.tunnel).top
+const ceilBase  = wx => krakenCfg() ? -40
+  : tunnelCfg() ? tunnelAt(wx, G.mcfg.tunnel).top
   : painted() ? wallDepth(wx, true)
   : stg() === 5
   ? TA * (16 + 30 * Math.abs(Math.sin(wx * .012)) ** 3)
@@ -398,7 +409,8 @@ const ceilBase  = wx => tunnelCfg() ? tunnelAt(wx, G.mcfg.tunnel).top
   : stg() === 2
   ? TA * (18 + 26 * (1 + Math.sin(wx * .014 + .7)) * .5 + 30 * (1 + Math.sin(wx * .0052)) * .5)
   : TA * (14 + 18 * (1 + Math.sin(wx * .011)) * .5 + 22 * (1 + Math.sin(wx * .0047 + 1.3)) * .5);
-const floorBase = wx => tunnelCfg() ? tunnelAt(wx, G.mcfg.tunnel).bot
+const floorBase = wx => krakenCfg() ? (kPhase() === 'deck' ? DECK_Y : kPhase() === 'sink' ? H + 300 : seabedY(wx))
+  : tunnelCfg() ? tunnelAt(wx, G.mcfg.tunnel).bot
   : painted() ? H - wallDepth(wx, false)
   : stg() === 5
   ? H - TA * (16 + 30 * Math.abs(Math.sin(wx * .012)) ** 3)
@@ -416,7 +428,7 @@ const FEAT_SEG = 150;
 const FEATS = { 1:{ kinds:'sbl', amp:1 }, 2:{ kinds:'sb', amp:.75 }, 3:{ kinds:'l', amp:.8 }, 4:{ kinds:'s', amp:.6 }, 5:{ kinds:'sbl', amp:.85 } };
 const fhash = n => { const s = Math.sin(n * 91.345 + 47.853) * 24634.6345; return s - Math.floor(s); };
 function featureAt(wx, side){
-  if (tunnelCfg() || painted()) return 0;
+  if (tunnelCfg() || painted() || krakenCfg()) return 0;
   const cfg = FEATS[stg()] || FEATS[1], i = Math.floor(wx / FEAT_SEG), u = wx / FEAT_SEG - i, k = i * 13 + side * 7 + stg() * 3;
   const pick = fhash(k); if (pick < .3) return 0;
   const kind = cfg.kinds[Math.floor(fhash(k + 1) * cfg.kinds.length)], A = cfg.amp;
@@ -453,6 +465,15 @@ const floorY = wx => floorBase(wx) - TA * featureAt(wx, 1) - surgeAmt();
 /* ---------- game state ---------- */
 let G = null;
 function buildMonthlyScript(cfg){
+  if (cfg.kraken){
+    // on deck until just before the ship goes down, a quiet moment while it sinks, then under water up to the boss
+    const ev = []; let t = 2.5, k = 0;
+    while (t < cfg.kraken.breakT - 2.5){ const type = cfg.order[k % cfg.order.length]; ev.push({ t, type }); t += type === 'tents' ? 3.9 : 3.3; k++; }
+    t = cfg.kraken.breakT + SINK_T + 1.5; k = 0;
+    while (t < cfg.endT){ ev.push({ t, type:cfg.order2[k % cfg.order2.length] }); t += 3.1; k++; }
+    ev.push({ t:cfg.endT + 4, type:'boss' });
+    return ev;
+  }
   const ev = []; let t = 2.5, k = 0;
   while (t < cfg.endT){ const type = cfg.order[k % cfg.order.length]; ev.push({ t, type }); t += type === 'turrets' || type === 'wall' || type === 'vents' ? 5 : 3.4; k++; }
   ev.push({ t:cfg.endT + 4, type:'boss' });
@@ -651,6 +672,14 @@ function spawn(type){
     // STAGE 2: crystals hanging from the ceiling break off and fall as you pass under them
     if (TA < .6) return spawn('dash');
     for (let i = 0; i < 5; i++){ const wx = G.scroll + W + 30 + i * 64; G.en.push({ id:G.eid++, kind:'shard', wx, x:W + 30, y:0, r:8, hp:2, sc:80, t:0, fall:false, vy:0 }); }
+  } else if (type === 'tent' || type === 'tents'){
+    // Kraken stage: a giant tentacle smashes up through the deck ahead of the ship, writhes, then slams flat along the deck
+    if (kPhase() !== 'deck') return spawn('dash');
+    const n = type === 'tents' ? 2 : 1, px = G.p ? G.p.x : 80;
+    for (let i = 0; i < n; i++){
+      const x = Math.min(W - 30, px + 160 + Math.random() * 120 + i * 120);
+      G.en.push({ id:G.eid++, kind:'tent', wx:G.scroll + x, x, y:DECK_Y, r:11, hp:6, sc:500, t:-i * .7, phase:'warn', len:0, L:0, a0:-Math.PI / 2, dirS:-1 });
+    }
   } else if (type === 'serp' || type === 'serps'){
     // STAGE 2: rock serpents burst out of the ceiling or floor ahead of the ship and hunt it, weaving unpredictably
     const n = type === 'serps' ? 2 : 1, first = Math.random() < .5;
@@ -686,6 +715,7 @@ function spawn(type){
 function makeBoss(type, rush){
   const k = rush ? 1.6 : 4, hp = n => Math.max(1, Math.round(n * k)); // 4x the original toughness; anger (below) makes up the rest
   switch (type){
+    case 'kraken': return { type, x:W + 170, y:H / 2, t:0, hp:hp(32), tips:[0, 1, 2].map(i => ({ i, hp:hp(5), st:'idle', t:-.8 - i * 1.1, dur:1.5, ang:Math.PI, ext:0 })), cd:1.8, ring:3, inkCd:4, inks:[], open:0, flash:0, dead:false };
     case 'core':  return { type, x:W + 90, y:H / 2, t:0, hp:hp(21), plates:Array(3).fill(hp(5)), cd:2, vol:0, flash:0, dead:false, mk:1 };
     case 'jelly': return { type, x:W + 90, y:H / 2, t:0, hp:hp(24), cd:1.6, wasOpen:false, flash:0, dead:false };
     case 'fort':  return { type, x:W + 110, y:H / 2, t:0, hp:hp(30), cannons:[{ dx:-25, dy:-44, hp:hp(12), cd:1.5 }, { dx:-12, dy:36, hp:hp(12), cd:2.4 }], cd:2, call:4, flash:0, dead:false };
@@ -784,11 +814,307 @@ function drawSerp(e){
   ctx.fillStyle = '#ff5a3a'; ctx.globalAlpha = glow; ctx.beginPath(); ctx.arc(1, -4.5, 2.2, 0, 6.283); ctx.arc(1, 4.5, 2.2, 0, 6.283); ctx.fill(); ctx.globalAlpha = 1;
   ctx.restore();
 }
+/* ---------- Kraken stage (monthly, October) ----------
+   tentPts: a tentacle as a chain of points from its root. base: the angle it leaves the root at, curl: how much it bends
+   toward the tip, wr: how much it writhes. Each point carries its radius (thick at the root, thin at the tip). */
+function tentPts(x, y, base, len, curl, wr, ph, N, r0){
+  const out = [{ x, y, r:r0 }], step = len / N;
+  for (let j = 1; j <= N; j++){
+    const s = j / N, d = base + curl * s * s + wr * Math.sin(ph + j * .55) * s;
+    x += Math.cos(d) * step; y += Math.sin(d) * step; out.push({ x, y, r:r0 * (1 - .74 * s) + 1.2 });
+  }
+  return out;
+}
+/* draws a tentacle: dark outline, skin, a lit upper edge, and a row of pale suckers on the underside */
+function drawTentacle(pts, o){
+  const n = pts.length, L = [], R = [], nor = [];
+  for (let i = 0; i < n; i++){
+    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)], dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy) || 1;
+    nor.push([-dy / l, dx / l]);
+  }
+  const body = (k) => { ctx.beginPath(); pts.forEach((q, i) => ctx.lineTo(q.x + nor[i][0] * q.r * k, q.y + nor[i][1] * q.r * k));
+    for (let i = n - 1; i >= 0; i--){ const q = pts[i]; ctx.lineTo(q.x - nor[i][0] * q.r * k, q.y - nor[i][1] * q.r * k); } ctx.closePath(); };
+  ctx.fillStyle = o.dark; body(1.12); ctx.fill();
+  ctx.fillStyle = o.skin; body(1); ctx.fill();
+  ctx.strokeStyle = o.light; ctx.lineCap = 'round'; ctx.globalAlpha = .55;
+  for (let i = 0; i < n - 1; i++){ const q = pts[i], w = pts[i + 1]; ctx.lineWidth = Math.max(1, q.r * .35);
+    ctx.beginPath(); ctx.moveTo(q.x + nor[i][0] * q.r * .55, q.y + nor[i][1] * q.r * .55); ctx.lineTo(w.x + nor[i + 1][0] * w.r * .55, w.y + nor[i + 1][1] * w.r * .55); ctx.stroke(); }
+  ctx.globalAlpha = 1;
+  for (let i = 2; i < n - 1; i += 1){ const q = pts[i], sx = q.x - nor[i][0] * q.r * .55, sy = q.y - nor[i][1] * q.r * .55, rr = Math.max(1.2, q.r * .32);
+    ctx.fillStyle = o.sucker; ctx.beginPath(); ctx.arc(sx, sy, rr, 0, 6.283); ctx.fill();
+    ctx.fillStyle = o.dark; ctx.beginPath(); ctx.arc(sx, sy, rr * .45, 0, 6.283); ctx.fill(); }
+}
+const TENT_SKIN = { skin:'#8a1f34', dark:'#2e0610', light:'#e0687c', sucker:'#f2c9b0' };
+const TENT_DEAD = { skin:'#4a2028', dark:'#1a0608', light:'#6a3a40', sucker:'#7a6058' };
+
+/* deck tentacle: warn (the deck shakes, 1 s) → rise → hold and writhe (the tip turns red just before) → slam flat along the
+   deck toward the ship → lie → pull back. Shoot it 6 times to cut it short. */
+const TENT_N = 14;
+function tentSegs(e){ return e.phase === 'warn' || e.len < 4 ? [] : tentPts(e.rx, e.ry, e.a0, e.len, e.curl || 0, .25, G.t * 4, TENT_N, 13).slice(1); }
+function enemyBody(e){
+  if (e.kind === 'serp') return e.phase === 'warn' ? null : serpSegs(e);
+  if (e.kind === 'tent') return e.phase === 'warn' ? null : tentSegs(e);
+  return null;
+}
+function updateTent(e, dt){
+  e.rx = e.wx - G.scroll; e.ry = floorY(e.wx) + 6;
+  const p = G.p, ease = v => 1 - (1 - v) * (1 - v);
+  if (e.phase === 'warn'){
+    e.x = e.rx; e.y = e.ry;
+    if (e.t > 0 && Math.random() < .6) G.parts.push({ x:e.rx + (Math.random() - .5) * 26, y:e.ry - 6, vx:(Math.random() - .5) * 80, vy:-60 - Math.random() * 90, l:.45, m:.45, c:'#a77a4a' });
+    if (e.t >= 1){ e.phase = 'rise'; e.t = 0; e.L = Math.max(120, Math.min(e.ry - 40, e.ry - (p ? p.y : H / 2) + 30)); G.shake = Math.max(G.shake, .35); sfx.small(); burst(e.rx, e.ry - 4, '#a77a4a', 12, .8); }
+  } else if (e.phase === 'rise'){ e.len = e.L * ease(Math.min(1, e.t / .5)); e.curl = .3 * Math.sin(e.t * 6); if (e.t >= .5){ e.phase = 'hold'; e.t = 0; } }
+  else if (e.phase === 'hold'){
+    e.curl = .7 * Math.sin(e.t * 3.4);
+    e.dirS = p && p.x > e.rx ? 1 : -1;                                   // it will slam toward the ship
+    e.a0 = -Math.PI / 2 + .25 * Math.sin(e.t * 2.6) * e.dirS;
+    if (e.t >= 1.25){ e.phase = 'slam'; e.t = 0; e.from = e.a0; }
+  } else if (e.phase === 'slam'){
+    const k = Math.min(1, e.t / .32), to = e.dirS > 0 ? -.1 : Math.PI + .1;
+    e.a0 = e.from + (to - e.from) * k * k; e.curl = -.2 * e.dirS * (1 - k);
+    if (e.t >= .32){ e.phase = 'lie'; e.t = 0; G.shake = Math.max(G.shake, .5); for (let i = 0; i < 6; i++) G.parts.push({ x:e.rx + e.dirS * e.len * Math.random(), y:e.ry - 4, vx:(Math.random() - .5) * 120, vy:-80 - Math.random() * 80, l:.5, m:.5, c:'#c9e6ff' }); }
+  } else if (e.phase === 'lie'){ e.curl = .1 * Math.sin(e.t * 9); if (e.t >= .55){ e.phase = 'back'; e.t = 0; } }
+  else if (e.phase === 'back'){ e.len = Math.max(0, e.len - dt * e.L * 2.2); if (e.len <= 0){ e.dead = true; return; } }
+  const segs = tentSegs(e), tip = segs[segs.length - 1] || { x:e.rx, y:e.ry };
+  e.x = tip.x; e.y = tip.y;
+}
+function drawTent(e){
+  if (e.phase === 'warn'){
+    if (e.t < 0) return;
+    const a = .5 + .5 * Math.sin(G.t * 24);
+    ctx.fillStyle = `rgba(255,120,60,${.25 + .25 * a})`; ctx.beginPath(); ctx.ellipse(e.rx, e.ry - 4, 22, 6, 0, 0, 6.283); ctx.fill();
+    ctx.strokeStyle = '#ffd08a'; ctx.lineWidth = 2; ctx.globalAlpha = .6 + .4 * a; ctx.beginPath();
+    for (let i = -3; i <= 3; i++){ ctx.moveTo(e.rx, e.ry - 2); ctx.lineTo(e.rx + i * 6, e.ry - 2 + (i & 1 ? 5 : -3)); } ctx.stroke(); ctx.globalAlpha = 1;
+    ctx.fillStyle = C.coral; ctx.font = '800 16px ui-monospace,monospace'; ctx.textAlign = 'center'; ctx.globalAlpha = .6 + .4 * a; ctx.fillText('!', e.rx, e.ry - 26); ctx.globalAlpha = 1; ctx.textAlign = 'left';
+    return;
+  }
+  const pts = tentPts(e.rx, e.ry, e.a0, e.len, e.curl || 0, .25, G.t * 4, TENT_N, 13);
+  drawTentacle(pts, TENT_SKIN);
+  // a hole broken through the planks around the root
+  ctx.fillStyle = '#120806'; ctx.beginPath(); ctx.ellipse(e.rx, e.ry - 2, 20, 5, 0, 0, 6.283); ctx.fill();
+  if (e.phase === 'hold' && e.t > .8){ const t = pts[pts.length - 1]; ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = `rgba(255,70,50,${.5 + .4 * Math.sin(G.t * 30)})`; ctx.beginPath(); ctx.arc(t.x, t.y, 10, 0, 6.283); ctx.fill(); ctx.globalCompositeOperation = 'source-over'; }
+}
+
+/* ---------- boss: クラーケン. Three arms with glowing tips lash at the ship (a red dotted line shows where, 0.8 s ahead).
+   Cut all three tips and its armoured eyelid opens: the eye is the weak point. Its beak spits shots; with the eye open it
+   adds rings of shots and clouds of ink. ---------- */
+const ARM_IDLE = [Math.PI + .55, Math.PI + .02, Math.PI - .5];
+const armRoot = (b, i) => ({ x:b.x + [14, 2, 16][i], y:b.y + [30, 40, 48][i] });
+const krakenEye = b => ({ x:b.x - 6, y:b.y - 2 });
+const krakenBeak = b => ({ x:b.x + 4, y:b.y + 30 });
+function armPts(b, a){
+  const R = armRoot(b, a.i);
+  if (a.hp <= 0) return tentPts(R.x, R.y, Math.PI / 2 + .35 + .1 * Math.sin(b.t * .8 + a.i), 120, .8, .12, b.t * 1.2 + a.i, 18, 15);
+  const e = a.ext, coil = a.st === 'aim' ? Math.min(1, a.t / .5) : 0;
+  let base = ARM_IDLE[a.i] + .2 * Math.sin(b.t * 1.3 + a.i * 2), d = a.ang - base;
+  while (d > Math.PI) d -= 6.283; while (d < -Math.PI) d += 6.283;
+  base += d * Math.max(e, coil * .5);
+  const len = 160 * (1 - .3 * coil) + (440 - 160) * e, curl = (1 - e) * .9 * Math.sin(b.t * 1.1 + a.i) - coil * 1.6 * (a.i === 2 ? -1 : 1);
+  return tentPts(R.x, R.y, base, len, curl, .22 * (1 - e), b.t * 3 + a.i, 18, 15);
+}
+const armTip = (b, a) => { const p = armPts(b, a); return p[p.length - 1]; };
+function updateKraken(b, dt){
+  b.t += dt; b.flash = Math.max(0, b.flash - dt);
+  b.x += (W - 110 - b.x) * Math.min(1, dt * .8); b.y = H / 2 - 8 + 32 * Math.sin(b.t * .5);
+  for (const k of b.inks){ k.x += k.vx * dt; k.r += 26 * dt; k.l -= dt; } b.inks = b.inks.filter(k => k.l > 0);
+  if (b.x > W - 30) return;
+  const p = G.p, open = b.tips.every(a => a.hp <= 0);
+  if (open) b.open = Math.min(1, b.open + dt * 1.5);
+  for (const a of b.tips){
+    if (a.hp <= 0){ a.ext = Math.max(0, a.ext - dt * 2); continue; }
+    a.t += dt;
+    const R = armRoot(b, a.i);
+    if (a.st === 'idle'){ if (a.t >= a.dur && p){ a.st = 'aim'; a.t = 0; } }
+    else if (a.st === 'aim'){
+      if (a.t < .35 && p) a.ang = Math.atan2(p.y - R.y, p.x - R.x);   // it locks on, then keeps the line for the last half second
+      if (a.t >= .8){ a.st = 'strike'; a.t = 0; sfx.small(); }
+    } else if (a.st === 'strike'){ a.ext = Math.min(1, a.t / .2); if (a.t >= .2){ a.st = 'hold'; a.t = 0; G.shake = Math.max(G.shake, .25); } }
+    else if (a.st === 'hold'){ if (a.t >= .35){ a.st = 'back'; a.t = 0; } }
+    else if (a.st === 'back'){ a.ext = Math.max(0, 1 - a.t / .6); if (a.t >= .6){ a.st = 'idle'; a.t = 0; a.dur = 1.1 + Math.random() * 1.6; } }
+  }
+  b.cd -= dt;
+  if (b.cd <= 0 && p){
+    b.cd = open ? 1.25 : 1.8; const m = krakenBeak(b), a0 = Math.atan2(p.y - m.y, p.x - m.x);
+    for (let k = -1; k <= 1; k++) G.eb.push({ x:m.x, y:m.y, vx:Math.cos(a0 + k * .22) * 150, vy:Math.sin(a0 + k * .22) * 150 });
+  }
+  if (open){
+    b.ring -= dt; if (b.ring <= 0){ b.ring = 2.6; const m = krakenBeak(b); for (let k = 0; k < 12; k++){ const a = k / 12 * 6.283 + b.t; G.eb.push({ x:m.x, y:m.y, vx:Math.cos(a) * 115, vy:Math.sin(a) * 115 }); } }
+    b.inkCd -= dt; if (b.inkCd <= 0){ b.inkCd = 5; const m = krakenBeak(b); for (let i = 0; i < 3; i++) b.inks.push({ x:m.x - 10, y:m.y + (i - 1) * 40, vx:-50 - Math.random() * 40, r:14, l:3.6, m:3.6 }); }
+  }
+}
+function shotVsKraken(b, s){
+  const hit = (x, y, r) => s.k === 'b' ? Math.abs(s.y - y) < r && s.x >= x - r && s.x - s.len <= x + r : d2(s, { x, y }) < r * r;
+  for (const a of b.tips){
+    if (a.hp <= 0) continue; const t = armTip(b, a);
+    if (!hit(t.x, t.y, 18)) continue;
+    s.dead = true; a.hp -= dmgOf(s); b.flash = .05; sfx.hit();
+    if (a.hp <= 0){ burst(t.x, t.y, '#ff5a6a', 26, 1.2); G.score += 1500; floatText(t.x, t.y - 14, '+1500', C.sun, 1, 12); a.st = 'idle'; if (b.tips.every(a => a.hp <= 0)) floatText(W / 2, H / 2 - 50, '目が開いた！', C.coral, 1.6, 16); }
+    return;
+  }
+  const e = krakenEye(b);
+  if (b.open > .6 && hit(e.x, e.y, 22)) return damageBoss(b, s, dmgOf(s));
+  for (const a of b.tips){ if (a.hp > 0 && armPts(b, a).some(q => d2(s, q) < (q.r + 2) ** 2)){ s.dead = true; return; } }
+  if (((s.x - (b.x + 30)) / 56) ** 2 + ((s.y - (b.y + 6)) / 50) ** 2 < 1 || ((s.x - (b.x + 100)) / 100) ** 2 + ((s.y - (b.y - 80)) / 130) ** 2 < 1) s.dead = true;
+}
+function krakenTouches(b, p){
+  if (((p.x - (b.x + 30)) / 50) ** 2 + ((p.y - (b.y + 6)) / 44) ** 2 < 1) return true;
+  if (((p.x - (b.x + 100)) / 92) ** 2 + ((p.y - (b.y - 80)) / 122) ** 2 < 1) return true;
+  return b.tips.some(a => a.hp > 0 && armPts(b, a).some(q => d2(p, q) < (q.r + 3) ** 2));
+}
+function drawKraken(b){
+  const now = performance.now() / 1000, e = krakenEye(b), p = G && G.p;
+  ctx.save();
+  // aim lines: where each arm is about to lash
+  for (const a of b.tips){
+    if (a.hp <= 0 || a.st !== 'aim') continue; const R = armRoot(b, a.i);
+    ctx.strokeStyle = C.coral; ctx.globalAlpha = .35 + .4 * Math.sin(a.t * 30); ctx.setLineDash([8, 6]); ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(R.x, R.y); ctx.lineTo(R.x + Math.cos(a.ang) * 440, R.y + Math.sin(a.ang) * 440); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+  }
+  // mantle: a huge spotted dome rising up and to the right, lit from the left
+  ctx.save(); ctx.translate(b.x + 100, b.y - 80); ctx.rotate(.35);
+  const mg = ctx.createRadialGradient(-50, -30, 10, 0, 0, 150); mg.addColorStop(0, '#c43a52'); mg.addColorStop(.6, '#7a1830'); mg.addColorStop(1, '#2a0510');
+  ctx.fillStyle = '#1a0308'; ctx.beginPath(); ctx.ellipse(0, 0, 104, 146, 0, 0, 6.283); ctx.fill();
+  ctx.fillStyle = mg; ctx.beginPath(); ctx.ellipse(0, 0, 100, 142, 0, 0, 6.283); ctx.fill();
+  ctx.fillStyle = 'rgba(40,4,14,.45)';
+  for (const [x, y, r] of [[-40, -60, 14], [10, -90, 10], [-60, 10, 11], [30, -20, 16], [-20, 60, 12], [40, 50, 9], [-70, -100, 7], [55, -70, 8]]){ ctx.beginPath(); ctx.ellipse(x, y, r, r * .7, .4, 0, 6.283); ctx.fill(); }
+  ctx.strokeStyle = 'rgba(255,150,170,.35)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(0, 0, 96, 138, 0, Math.PI * .65, Math.PI * 1.35); ctx.stroke();
+  ctx.restore();
+  // dead arms hang limp behind, live arms in front
+  for (const a of b.tips) if (a.hp <= 0) drawTentacle(armPts(b, a), TENT_DEAD);
+  for (const a of b.tips) if (a.hp > 0) drawTentacle(armPts(b, a), TENT_SKIN);
+  // head
+  const hg = ctx.createRadialGradient(b.x + 10, b.y - 10, 6, b.x + 30, b.y + 6, 60); hg.addColorStop(0, '#b8344a'); hg.addColorStop(1, '#4a0a1a');
+  ctx.fillStyle = '#1a0308'; ctx.beginPath(); ctx.ellipse(b.x + 30, b.y + 6, 58, 52, 0, 0, 6.283); ctx.fill();
+  ctx.fillStyle = hg; ctx.beginPath(); ctx.ellipse(b.x + 30, b.y + 6, 55, 49, 0, 0, 6.283); ctx.fill();
+  // beak
+  const m = krakenBeak(b), gape = 3 + 3 * Math.max(0, Math.sin(b.t * 5));
+  ctx.fillStyle = '#20140c'; ctx.beginPath(); ctx.moveTo(m.x - 12, m.y); ctx.lineTo(m.x + 6, m.y - 6 - gape); ctx.lineTo(m.x + 8, m.y); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(m.x - 10, m.y + 1); ctx.lineTo(m.x + 6, m.y + 6 + gape); ctx.lineTo(m.x + 8, m.y + 1); ctx.closePath(); ctx.fill();
+  // eye: a gold iris with a slit pupil that follows the ship, under a heavy armoured lid until the three arms are cut
+  ctx.save(); ctx.beginPath(); ctx.ellipse(e.x, e.y, 20, 15, 0, 0, 6.283); ctx.clip();
+  ctx.fillStyle = '#f4e6a0'; ctx.fillRect(e.x - 22, e.y - 17, 44, 34);
+  const look = p ? Math.atan2(p.y - e.y, p.x - e.x) : Math.PI, ix = e.x + Math.cos(look) * 4, iy = e.y + Math.sin(look) * 3;
+  const ig = ctx.createRadialGradient(ix, iy, 1, ix, iy, 13); ig.addColorStop(0, '#ffe36a'); ig.addColorStop(1, '#b85a00');
+  ctx.fillStyle = ig; ctx.beginPath(); ctx.arc(ix, iy, 12, 0, 6.283); ctx.fill();
+  ctx.fillStyle = '#0a0204'; ctx.beginPath(); ctx.ellipse(ix, iy, 9, 2.6 + b.open * 1.5, 0, 0, 6.283); ctx.fill();
+  const lid = 1 - b.open;
+  if (lid > 0){
+    ctx.fillStyle = '#5a1222'; ctx.fillRect(e.x - 22, e.y - 17, 44, 17 * lid); ctx.fillRect(e.x - 22, e.y + 17 - 17 * lid, 44, 17 * lid);
+    ctx.strokeStyle = '#2a0610'; ctx.lineWidth = 1.5; for (let k = 0; k < 4; k++){ ctx.beginPath(); ctx.moveTo(e.x - 20, e.y - 15 + k * 4 * lid); ctx.lineTo(e.x + 20, e.y - 15 + k * 4 * lid); ctx.stroke(); }
+    if (lid > .9){ ctx.strokeStyle = `rgba(255,190,80,${.5 + .3 * Math.sin(now * 4)})`; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(e.x - 18, e.y); ctx.lineTo(e.x + 18, e.y); ctx.stroke(); }
+  }
+  ctx.restore();
+  ctx.strokeStyle = '#1a0308'; ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(e.x, e.y, 20, 15, 0, 0, 6.283); ctx.stroke();
+  if (b.open > .6){ ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = `rgba(255,200,80,${.25 + .15 * Math.sin(b.t * 10)})`; ctx.beginPath(); ctx.arc(e.x, e.y, 24, 0, 6.283); ctx.fill(); ctx.globalCompositeOperation = 'source-over'; }
+  // glowing tips: the targets
+  for (const a of b.tips){
+    if (a.hp <= 0) continue; const t = armTip(b, a), pulse = .6 + .4 * Math.sin(now * 7 + a.i * 2), g = ctx.createRadialGradient(t.x, t.y, 0, t.x, t.y, 15);
+    g.addColorStop(0, b.flash > 0 ? '#ffffff' : '#ffe0c0'); g.addColorStop(.4, `rgba(255,110,60,${.85 * pulse})`); g.addColorStop(1, 'rgba(255,60,40,0)');
+    ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(t.x, t.y, 15, 0, 6.283); ctx.fill(); ctx.globalCompositeOperation = 'source-over';
+  }
+  if (b.flash > 0){ ctx.fillStyle = 'rgba(255,255,255,.18)'; ctx.beginPath(); ctx.ellipse(b.x + 30, b.y + 6, 55, 49, 0, 0, 6.283); ctx.fill(); }
+  // ink clouds hide part of the screen
+  for (const k of b.inks){ const g = ctx.createRadialGradient(k.x, k.y, 0, k.x, k.y, k.r); const a = .8 * Math.min(1, k.l / 1.2);
+    g.addColorStop(0, `rgba(6,4,12,${a})`); g.addColorStop(.7, `rgba(10,6,20,${a * .8})`); g.addColorStop(1, 'rgba(10,6,20,0)'); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(k.x, k.y, k.r, 0, 6.283); ctx.fill(); }
+  ctx.restore();
+}
+
+/* background: a storm at night over the sea while on deck; deep water with light shafts once the ship has sunk */
+const RAIN = Array.from({ length:70 }, () => ({ x:Math.random() * 800, y:Math.random() * 400, s:.7 + Math.random() * .6 }));
+function drawKrakenBg(scroll){
+  const ph = kPhase(), now = performance.now() / 1000;
+  if (ph === 'sea'){
+    const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#0d4a6a'); g.addColorStop(.5, '#06263c'); g.addColorStop(1, '#020a14');
+    ctx.fillStyle = g; ctx.fillRect(-10, -10, W + 20, H + 20);
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 5; i++){ const x = ((i * 190 - scroll * .15) % (W + 300) + W + 300) % (W + 300) - 150, sw = 30 + 20 * Math.sin(now * .7 + i);
+      const rg = ctx.createLinearGradient(0, 0, 0, H * .9); rg.addColorStop(0, 'rgba(140,220,255,.16)'); rg.addColorStop(1, 'rgba(140,220,255,0)');
+      ctx.fillStyle = rg; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x + sw, 0); ctx.lineTo(x + sw + 120, H * .9); ctx.lineTo(x + 60, H * .9); ctx.closePath(); ctx.fill(); }
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = 'rgba(200,235,255,.35)';
+    for (const d of dots[0]){ const x = ((d.x - scroll * .25) % 800 + 800) % 800, y = ((d.y + G.t * 8) % H + H) % H; if (x < W) ctx.fillRect(x, y, 1.4, 1.4); }
+    // the wreck of the ship, far below
+    ctx.fillStyle = 'rgba(4,14,22,.8)'; const wx = ((400 - scroll * .2) % (W + 500) + W + 500) % (W + 500) - 250;
+    ctx.beginPath(); ctx.moveTo(wx, H - 40); ctx.lineTo(wx + 230, H - 70); ctx.lineTo(wx + 250, H - 20); ctx.lineTo(wx + 10, H); ctx.closePath(); ctx.fill();
+    ctx.fillRect(wx + 80, H - 150, 6, 100); ctx.fillRect(wx + 160, H - 170, 5, 110);
+    if (swimCfg()){ ctx.strokeStyle = 'rgba(210,242,255,.25)'; ctx.lineWidth = 1;
+      for (const d of dots[1]){ const x = ((d.x - scroll * .3) % 800 + 800) % 800, y = ((d.y - G.t * 40 * (1 + d.x % 3 * .3)) % H + H) % H; if (x < W){ ctx.beginPath(); ctx.arc(x, y, 1.5 + d.x % 2, 0, 6.283); ctx.stroke(); } } }
+    return;
+  }
+  const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#04060e'); g.addColorStop(.55, '#142234'); g.addColorStop(1, '#0a1622');
+  ctx.fillStyle = g; ctx.fillRect(-10, -10, W + 20, H + 20);
+  const mo = planetSprite('moon', 26); ctx.globalAlpha = .7; ctx.drawImage(mo, W * .8 - mo.width / 2, H * .16 - mo.height / 2); ctx.globalAlpha = 1;
+  // storm clouds
+  ctx.fillStyle = 'rgba(20,28,40,.85)';
+  for (let i = 0; i < 9; i++){ const x = ((i * 130 - scroll * .08) % (W + 260) + W + 260) % (W + 260) - 130; ctx.beginPath(); ctx.ellipse(x, 20 + (i % 3) * 14, 110, 30, 0, 0, 6.283); ctx.fill(); }
+  // the open sea behind the ship, with far tentacles rising out of it
+  const hy = H * .58;
+  ctx.fillStyle = '#081420'; ctx.fillRect(0, hy, W, H - hy);
+  ctx.strokeStyle = 'rgba(120,170,210,.18)'; ctx.lineWidth = 1;
+  for (let r = 0; r < 6; r++){ const y = hy + 6 + r * r * 4; ctx.beginPath(); for (let x = 0; x <= W; x += 12){ const yy = y + 2 * Math.sin(x * .05 + now * 2 + r - scroll * .01 * (r + 1)); x ? ctx.lineTo(x, yy) : ctx.moveTo(x, yy); } ctx.stroke(); }
+  for (let i = 0; i < 3; i++){
+    const x = ((i * 380 + 200 - scroll * .3) % (W + 400) + W + 400) % (W + 400) - 200;
+    const pts = tentPts(x, hy + 20, -Math.PI / 2 + .2 * Math.sin(now * .6 + i), 120 + 30 * i, 1.6 * (i % 2 ? 1 : -1), .3, now * 1.5 + i, 12, 12);
+    drawTentacle(pts, { skin:'#0e1824', dark:'#070d14', light:'#1a2a3a', sucker:'#16222e' });
+  }
+  // rain and lightning
+  ctx.strokeStyle = 'rgba(180,210,240,.28)'; ctx.lineWidth = 1; ctx.beginPath();
+  for (const d of RAIN){ const x = ((d.x - G.t * 160 * d.s - scroll * .5) % 800 + 800) % 800, y = ((d.y + G.t * 520 * d.s) % 400 + 400) % 400; if (x < W){ ctx.moveTo(x, y); ctx.lineTo(x - 5, y + 13); } }
+  ctx.stroke();
+  const fl = Math.max(0, Math.sin(now * .9) * Math.sin(now * 7.3)); if (fl > .9){ ctx.fillStyle = `rgba(220,235,255,${(fl - .9) * 2.5})`; ctx.fillRect(0, 0, W, H); }
+}
+/* terrain: the ship's deck and hull on top of the sea; while sinking the deck drops away and the water rises over the
+   screen; under water, a rolling seabed with kelp (the kelp does not hurt) */
+function drawKrakenTerrain(scroll){
+  const ph = kPhase(), k = krakenCfg(), sp = ph === 'sink' ? (G.t - k.breakT) / SINK_T : 0, now = performance.now() / 1000;
+  if (ph !== 'sea'){
+    const drop = ph === 'sink' ? sp * sp * 260 : 0, tilt = ph === 'sink' ? sp * .12 : 0, dy = DECK_Y + drop;
+    ctx.save(); ctx.translate(W / 2, dy); ctx.rotate(tilt); ctx.translate(-W / 2, -dy);
+    ctx.fillStyle = '#2a170c'; ctx.fillRect(-40, dy, W + 80, H - dy + 300);
+    ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.lineWidth = 1;
+    for (let y = dy + 16; y < H + 300; y += 13){ ctx.beginPath(); ctx.moveTo(-40, y); ctx.lineTo(W + 40, y); ctx.stroke(); }
+    for (let wx = Math.floor(scroll / 170) * 170; wx < scroll + W + 170; wx += 170){
+      const x = wx - scroll + 40; ctx.fillStyle = '#0a0503'; ctx.fillRect(x, dy + 22, 22, 16);
+      ctx.fillStyle = `rgba(255,170,70,${.35 + .2 * Math.sin(now * 3 + wx)})`; ctx.fillRect(x + 3, dy + 25, 16, 10);
+    }
+    ctx.fillStyle = '#7a4f2c'; ctx.fillRect(-40, dy, W + 80, 9);
+    ctx.fillStyle = '#c08a4a'; ctx.fillRect(-40, dy, W + 80, 2);
+    ctx.strokeStyle = 'rgba(30,14,6,.7)';
+    for (let wx = Math.floor(scroll / 46) * 46; wx < scroll + W + 46; wx += 46){ const x = wx - scroll; ctx.beginPath(); ctx.moveTo(x, dy + 2); ctx.lineTo(x, dy + 9); ctx.stroke(); }
+    ctx.fillStyle = 'rgba(200,230,255,.08)'; ctx.fillRect(-40, dy + 1, W + 80, 3); // rain on the planks
+    ctx.restore();
+    if (ph === 'sink'){
+      // two giant tentacles wrap the ship, and the sea pours over everything
+      for (const [x0, s] of [[W * .2, 1], [W * .72, -1]]){
+        const pts = tentPts(x0, H + 60, -Math.PI / 2 + s * .25, 120 + 260 * Math.min(1, sp * 2), s * (1.2 + 1.4 * sp), .2, now * 2, 16, 34);
+        drawTentacle(pts, TENT_SKIN);
+      }
+      const wy = H - Math.pow(Math.min(1, sp * 1.15), .8) * (H + 30);
+      ctx.fillStyle = 'rgba(12,70,100,.78)'; ctx.beginPath(); ctx.moveTo(0, H + 10);
+      for (let x = 0; x <= W; x += 10) ctx.lineTo(x, wy + 6 * Math.sin(x * .04 + now * 5)); ctx.lineTo(W, H + 10); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = 'rgba(220,245,255,.6)'; ctx.lineWidth = 2; ctx.beginPath();
+      for (let x = 0; x <= W; x += 10){ const y = wy + 6 * Math.sin(x * .04 + now * 5); x ? ctx.lineTo(x, y) : ctx.moveTo(x, y); } ctx.stroke();
+    }
+    return;
+  }
+  if (TA <= .01) return;
+  const pts = []; for (let x = -4; x <= W + 4; x += 4) pts.push([x, floorY(x + scroll)]);
+  const g = ctx.createLinearGradient(0, H - 60, 0, H); g.addColorStop(0, '#3a4a3e'); g.addColorStop(1, '#0c1612');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(-4, H + 2); for (const [x, y] of pts) ctx.lineTo(x, y); ctx.lineTo(W + 4, H + 2); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(160,200,170,.35)'; ctx.lineWidth = 1.5; ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.stroke();
+  for (let wx = Math.floor(scroll / 38) * 38; wx < scroll + W + 38; wx += 38){
+    const h = hash(wx * 1.7); if (h < .45) continue;
+    const x = wx - scroll, y = floorY(wx), len = 30 + h * 50;
+    ctx.strokeStyle = h > .8 ? '#3f8a4a' : '#2f6d3a'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(x, y);
+    for (let s = 1; s <= 6; s++) ctx.lineTo(x + 6 * Math.sin(now * 1.4 + wx + s * .7) * s / 6, y - len * s / 6); ctx.stroke();
+  }
+}
 function killEnemy(e){
   e.dead = true; G.score += e.sc; sfx.small();
   if (G.stage >= 4 && e.kind !== 'shard' && G.p && Math.abs(e.x - G.p.x) > 50) aim(e.x, e.y, 105); // a parting shot
   burst(e.x, e.y, e.kind === 'carrier' ? C.sun : C.coral, 14, 1);
   if (e.kind === 'carrier') dropCap(e.x, e.y);
+  if (e.kind === 'tent'){ tentSegs(e).forEach((q, i) => { if (i % 3 === 0) burst(q.x, q.y, '#d0546a', 4, .5); }); G.shake = Math.max(G.shake, .3); }
   if (e.kind === 'serp'){ for (const q of serpSegs(e)) burst(q.x, q.y, '#9aaa7a', 5, .5); G.shake = Math.max(G.shake, .25); if (Math.random() < .5) dropCap(e.x, e.y); }
   if (e.g != null){ const gr = G.groups[e.g]; gr.k++; if (gr.k === gr.n) dropCap(e.x, e.y); }
 }
@@ -864,7 +1190,7 @@ function updatePlayer(dt){
   if (keys.arrowleft || keys.a) mx--; if (keys.arrowright || keys.d) mx++;
   if (keys.arrowup || keys.w) my--;   if (keys.arrowdown || keys.s) my++;
   if (mx || my){ const l = Math.hypot(mx, my); p.x += mx / l * sp * dt; p.y += my / l * sp * dt; }
-  const sw = G.mcfg && G.mcfg.swim;
+  const sw = swimCfg();
   if (sw && !(G.boss && G.bossDead)){
     p.y += sw.sink * dt; p.x += sw.current * dt;
     if (Math.random() < dt * 4) G.parts.push({ bubble:true, x:p.x - 14, y:p.y - 2, vx:-20, vy:-30, l:1.2, m:1.2, c:'#d2f2ff' });
@@ -891,7 +1217,7 @@ function updatePlayer(dt){
 /* how much of the boss is left (core + every breakable part), 1 = untouched */
 function bossLife(b){
   let v = Math.max(0, b.hp);
-  for (const a of [b.plates, b.cannons, b.segs, b.gems]) if (a) for (const x of a) v += Math.max(0, typeof x === 'number' ? x : x.hp);
+  for (const a of [b.plates, b.cannons, b.segs, b.gems, b.tips]) if (a) for (const x of a) v += Math.max(0, typeof x === 'number' ? x : x.hp);
   return v;
 }
 function updateBoss(dt){
@@ -904,6 +1230,7 @@ function updateBoss(dt){
   if (b.type === 'jelly') return updateJelly(b, dt);
   if (b.type === 'worm') return updateWorm(b, dt);
   if (b.type === 'king') return updateKing(b, dt);
+  if (b.type === 'kraken') return updateKraken(b, dt);
   if (b.type === 'fort') return updateFort(b, dt);
   b.t += dt; b.x += (W - 120 - b.x) * Math.min(1, dt * 1.2); b.y = H / 2 + (b.mk >= 2 ? 95 : 80) * Math.sin(b.t * (b.mk >= 2 ? 1 : .8));
   if (b.mk === 3 && b.x < W - 60){ b.call -= dt; if (b.call <= 0){ b.call = 5; spawn('rear'); } }
@@ -919,6 +1246,7 @@ function shotVsBoss(s){
   if (b.type === 'jelly') return shotVsJelly(b, s);
   if (b.type === 'worm') return shotVsWorm(b, s);
   if (b.type === 'king') return shotVsKing(b, s);
+  if (b.type === 'kraken') return shotVsKraken(b, s);
   if (b.type === 'fort') return shotVsFort(b, s);
   for (let i = 0; i < b.plates.length; i++){
     if (b.plates[i] <= 0) continue;
@@ -1192,15 +1520,17 @@ function drawKing(b){
 }
 
 /* ---------- boss: shared helpers ---------- */
-const BOSS_NAME = { core:'コア', jelly:'深淵クラゲ', fort:'幽霊戦艦', worm:'ヒートワーム', king:'深海の王' };
+const BOSS_NAME = { core:'コア', jelly:'深淵クラゲ', fort:'幽霊戦艦', worm:'ヒートワーム', king:'深海の王', kraken:'クラーケン' };
 function bossWeakPoint(b){
   if (b.type === 'jelly') return jellyCore(b);
   if (b.type === 'worm') return { x:b.x, y:b.y };
+  if (b.type === 'kraken'){ const a = b.tips.find(a => a.hp > 0); return a ? armTip(b, a) : krakenEye(b); }
   if (b.type === 'king'){ const g = b.gems.find(g => g.hp > 0); return g ? { x:b.x + g.dx, y:b.y + g.dy } : kingMouth(b); }
   if (b.type === 'fort'){ const c = b.cannons.find(c => c.hp > 0); return c ? { x:b.x + c.dx, y:b.y + c.dy } : { x:b.x - 40, y:b.y + 2 }; }
   const i = b.plates.findIndex(v => v > 0); return i >= 0 ? { x:plateX(b, i), y:b.y } : { x:b.x, y:b.y };
 }
 function bossTouches(b, p){
+  if (b.type === 'kraken') return krakenTouches(b, p);
   if (b.type === 'king') return ((p.x - (b.x - 5)) / 115) ** 2 + ((p.y - (b.y - 20)) / 140) ** 2 < 1;
   if (b.type === 'worm') return d2(p, b) < 22 * 22 || wormRings(b).some(g => g.s.hp > 0 && d2(p, g) < 15 * 15);
   if (b.type === 'jelly'){
@@ -1574,6 +1904,11 @@ function update(dt){
   const speed = G.boss ? 30 : 60; G.scroll += speed * dt;
   TA = G.boss ? Math.max(0, TA - dt / 3) : Math.min(1, G.t / 5);
   while (G.si < G.script.length && G.script[G.si].t <= G.t){ spawn(G.script[G.si].type); G.si++; }
+  if (krakenCfg() && !G.ksunk && G.t >= krakenCfg().breakT){
+    // the Kraken drags the ship under: shake, the deck drops away, the sea pours in
+    G.ksunk = true; G.shake = 1.4; sfx.die(); floatText(W / 2, H / 2 - 40, '船が沈む！', C.coral, 2.2, 18);
+    for (const e of G.en) if (e.kind === 'tent'){ e.phase = 'back'; e.t = 0; }
+  }
 
   if (G.p) updatePlayer(dt);
   else { G.respawn -= dt; if (G.respawn <= 0){ if (G.lives > 0){ G.lives--; spawnPlayer(); } else return gameOver(); } }
@@ -1604,12 +1939,13 @@ function update(dt){
       else { e.vy += 820 * dt; e.y += e.vy * dt; if (e.y > floorY(e.wx) - 4){ e.dead = true; burst(e.x, e.y, '#ff9a8a', 8, .6); } }
     }
     else if (e.kind === 'serp') updateSerp(e, dt);
+    else if (e.kind === 'tent') updateTent(e, dt);
     else if (e.kind === 'ember'){ e.vy += 300 * dt * e.g2; e.x += e.vx * dt; e.y += e.vy * dt; }
     else if (e.kind === 'tur'){
       e.x = e.wx - G.scroll; e.y = e.top ? ceilY(e.wx) + 6 : floorY(e.wx) - 6;
       e.cd -= dt; if (e.cd <= 0 && e.x < W - 10 && e.x > 40){ e.cd = (1.8 + Math.random() * .6) / fireK(); aim(e.x, e.y, 130); }
     }
-    if ((e.kind === 'rear' ? e.x > W + 40 : e.x < -40) || (e.kind !== 'serp' && (e.y < -40 || e.y > H + 40))) e.dead = true;
+    if ((e.kind === 'rear' ? e.x > W + 40 : e.x < -40) || (e.kind !== 'serp' && e.kind !== 'tent' && (e.y < -40 || e.y > H + 40))) e.dead = true;
   }
   // gimmicks
   for (const g of G.gates){ g.x = g.wx - G.scroll; if (g.x < -30) g.dead = true; }
@@ -1644,7 +1980,7 @@ function update(dt){
       let hit;
       if (s.k === 'b') hit = !s.hit.has(e.id) && s.x >= e.x - e.r && s.x - s.len <= e.x + e.r && Math.abs(s.y - e.y) < e.r + 2;
       else hit = d2(s, e) < (e.r + 3) ** 2;
-      if (!hit && e.kind === 'serp' && e.phase !== 'warn') hit = serpSegs(e).some(q => s.k === 'b' ? !s.hit.has(e.id) && s.x >= q.x - q.r && s.x - s.len <= q.x + q.r && Math.abs(s.y - q.y) < q.r + 2 : d2(s, q) < (q.r + 3) ** 2);
+      if (!hit && enemyBody(e)) hit = enemyBody(e).some(q => s.k === 'b' ? !s.hit.has(e.id) && s.x >= q.x - q.r && s.x - s.len <= q.x + q.r && Math.abs(s.y - q.y) < q.r + 2 : d2(s, q) < (q.r + 3) ** 2);
       if (!hit) continue;
       if (s.k === 'b' && !s.heavy) s.hit.add(e.id); else s.dead = true;
       e.hp -= dmgOf(s);
@@ -1663,7 +1999,7 @@ function update(dt){
   if (p){
     for (const e of G.en){
       if (e.dead || p.inv > 0) continue;
-      if (e.kind === 'serp' ? (e.phase === 'warn' || (d2(p, e) >= (e.r + 4) ** 2 && !serpSegs(e).some(q => d2(p, q) < (q.r + 3) ** 2))) : d2(p, e) >= (e.r + 4) ** 2) continue;
+      if (e.kind === 'serp' || e.kind === 'tent' ? (e.phase === 'warn' || (d2(p, e) >= (e.r + 4) ** 2 && !enemyBody(e).some(q => d2(p, q) < (q.r + 3) ** 2))) : d2(p, e) >= (e.r + 4) ** 2) continue;
       const shielded = p.shield > 0; hurtPlayer();
       if (shielded && e.kind !== 'tur') killEnemy(e);
       if (!G.p) break;
@@ -1900,6 +2236,7 @@ const STAR_COLS = ['#ffffff', '#cfe8ff', '#ffe8c4', '#bcd2ff'];
 const dots = [0, 1, 2].map(l => Array.from({ length:[80, 45, 14][l] }, () => ({ x:Math.random() * 800, y:Math.random() * H, c:STAR_COLS[Math.random() * 4 | 0], p:Math.random() * 6.283 })));
 let bgScroll = 0;
 function drawBg(scroll){
+  if (krakenCfg()) return drawKrakenBg(scroll);
   const t = theme(), now = performance.now() / 1000;
   if (t.bg === 'station'){
     const bk = stationBack(), ox = -((scroll * .35) % bk.width);
@@ -1932,7 +2269,7 @@ function drawBg(scroll){
     const ru = ruinsLayer(t), rx = -((scroll * .22) % ru.width);
     ctx.globalAlpha = .5; for (let x = rx; x < W; x += ru.width) ctx.drawImage(ru, x, 0); ctx.globalAlpha = 1;
   }
-  if (G && G.mcfg && G.mcfg.swim){
+  if (swimCfg()){
     ctx.strokeStyle = 'rgba(210,242,255,.25)'; ctx.lineWidth = 1;
     for (const d of dots[1]){ const x = ((d.x - scroll * .3) % 800 + 800) % 800, y = ((d.y - G.t * 40 * (1 + d.x % 3 * .3)) % H + H) % H; if (x < W){ ctx.beginPath(); ctx.arc(x, y, 1.5 + d.x % 2, 0, 6.283); ctx.stroke(); } }
   }
@@ -1965,6 +2302,7 @@ function drawPainted(scroll, a, im){
   }
 }
 function drawTerrain(scroll){
+  if (krakenCfg()) return drawKrakenTerrain(scroll);
   if (TA <= .01) return;
   const pa = painted(), pim = pa && wallImg(stg());
   if (pa && pim.complete && pim.naturalWidth) return drawPainted(scroll, pa, pim);
@@ -2126,6 +2464,7 @@ function drawLeaf(x, y, s, blink){
 }
 function drawEnemy(e){
   if (e.kind === 'serp') return drawSerp(e);
+  if (e.kind === 'tent') return drawTent(e);
   ctx.save(); ctx.translate(e.x, e.y);
   if (e.kind === 'shard'){
     const jig = e.fall ? 0 : (G && G.p && e.x - G.p.x < 170 ? Math.sin(e.t * 40) * 1.2 : 0);
@@ -2188,6 +2527,7 @@ function drawBoss(b){
   if (b.type === 'jelly') return drawJelly(b);
   if (b.type === 'worm') return drawWorm(b);
   if (b.type === 'king') return drawKing(b);
+  if (b.type === 'kraken') return drawKraken(b);
   if (b.type === 'fort') return drawFort(b);
   if (CORE_IMG.complete && CORE_IMG.naturalWidth) return drawCoreSprite(b);
   ctx.save(); ctx.translate(b.x + 36, b.y); // the old look, only when the image is missing
@@ -2210,7 +2550,7 @@ function drawBoss(b){
 /* stage card: a dark panel in the middle with three short lines, readable at a glance; it fades out by itself */
 function drawStageCard(){
   const cs = getComputedStyle(document.documentElement), fd = cs.getPropertyValue('--f-display'), fb = cs.getPropertyValue('--f-body'), fm = cs.getPropertyValue('--f-mono');
-  const st = G.mcfg ? { name:G.mcfg.title, warn:G.mcfg.tag || '', boss:BOSS_NAME[G.mcfg.boss] || '' } : STAGES[G.stage];
+  const st = G.mcfg ? { name:G.mcfg.title, warn:G.mcfg.tag || '', boss:G.mcfg.bossName || BOSS_NAME[G.mcfg.boss] || '' } : STAGES[G.stage];
   const a = Math.min(1, G.banner / .6, (3.4 - G.banner) / .25), cw = 260, ch = 104, x = W / 2 - cw / 2, y = H / 2 - ch / 2 - 6;
   ctx.save(); ctx.globalAlpha = a;
   ctx.fillStyle = 'rgba(4,12,20,.82)'; ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y, cw, ch, 10); else ctx.rect(x, y, cw, ch); ctx.fill();
