@@ -312,7 +312,7 @@ const STAGES = {
   1:{ name:'苔むす岩窟',     warn:'岩壁にふれるとミス',         boss:'コア' },
   2:{ name:'石の古代都市',   warn:'落ちる結晶 ・ 壁から出る岩蛇', boss:'門番クラゲ' },
   3:{ name:'宇宙ステーション', warn:'レーザーゲート ・ 壊せる隔壁', boss:'幽霊戦艦' },
-  4:{ name:'紅蓮の溶岩巣',   warn:'景色が3回変わる ・ 火を落とす木', boss:'ヒートワーム' },
+  4:{ name:'紅蓮の溶岩巣',   warn:'分かれ道 ・ 上は景色が変わり、下は長く険しい', boss:'ヒートワーム' },
   5:{ name:'月光の玉座',     warn:'ブラックホール ・ ボス5連戦', boss:'深海の王' }
 };
 /* ---------- 今月のステージ (monthly stage) ----------
@@ -587,10 +587,126 @@ for (const k in WALLS){ const w = WALLS[k]; w.s = WALL_SCALE[k]; w.tmax = Math.m
 function wallImg(k){ if (!WALL_IMG[k]){ WALL_IMG[k] = new Image(); WALL_IMG[k].src = `img/wall${k}.webp`; } return WALL_IMG[k]; }
 /* STAGE 4 travels through three areas, each with its own walls and sky: green floating ruins → the fanged tunnel → the magma nest.
    Between areas the walls pull back off the screen for a moment and come back as the next area. */
-const AREA4_T = [27, 54];
-const AREA4_NAME = { a:'緑の浮遊遺跡', b:'牙のトンネル', c:'紅蓮の溶岩巣' };
-const area4 = () => !G || G.boss || G.practice || G.t >= AREA4_T[1] ? 'c' : G.t >= AREA4_T[0] ? 'b' : 'a';
+/* STAGE 4 route: it opens in the green floating ruins; at FORK_T a rock spur grows out of the right side into the middle and
+   splits the passage. Whichever side the ship is on when the spur's tip passes it decides the route.
+   up:   the fanged tunnel, then the magma nest, then the boss.
+   down: the green ruins go on, sloping down; the walls snake, pinch to narrow gaps, and more kinds of enemies come; then the boss. */
+const FORK_T = 14, FORK_L = 600, UP_T = [38, 58];
+const AREA_NAME = { '4a':'緑の浮遊遺跡', '4b':'牙のトンネル', '4c':'紅蓮の溶岩巣' };
+const s4 = () => stg() === 4 && G && !G.mcfg;
+const area4 = () => {
+  if (!G || G.practice) return 'c';
+  if (G.route !== 'up') return 'a';
+  return G.boss || G.t >= UP_T[1] ? 'c' : G.t >= UP_T[0] ? 'b' : 'a';
+};
 const wallKey = () => stg() === 4 ? '4' + area4() : String(stg());
+function wedgeAt(wx){
+  const f = G && G.fork; if (!f) return null;
+  const u = wx - f.wA; if (u < 0 || u > FORK_L) return null;
+  const th = 96 * Math.min(1, u / 170) ** .8 * Math.min(1, (FORK_L - u) / 120) ** .8 * (f.k == null ? 1 : f.k);
+  if (th < 2) return null;
+  const yc = H / 2 + 8 * Math.sin(wx * .018), r = 6 * tri(wx / 38) * th / 96;
+  return { top:yc - th / 2 + r, bot:yc + th / 2 - r * .6, yc, th };
+}
+/* the down route: the green ruins' walls, cut into thin slices that each get shifted: a slope down to the right, a slow
+   snake, and pinches every 520 px down to a 74 px gap */
+const downK = () => Math.max(0, Math.min(1, (G.t - G.downT0 - 1.2) / 2));
+function downShift(wx){
+  const x = wx - G.scroll, k = downK(), d = wx - G.downX0;
+  const amp = 30 * (.5 + .5 * Math.sin(d * .0023));
+  return k * (.2 * (x - W * .45) + amp * Math.sin(d * .011));
+}
+function downPinch(wx, gap){
+  const c0 = G.downX0 + W + 260, m = (((wx - c0) % 520) + 520) % 520, dd = Math.min(m, 520 - m), s = Math.max(0, 1 - dd / 60);
+  return s * s * (3 - 2 * s) * Math.max(0, gap - 74) / 2 * downK();
+}
+/* a rock fill cut from the wall art itself (the deep, root side of the ceiling strip), so filled rock matches the painted walls */
+function artPattern(k, a, im){
+  const key = 'ap' + k; if (artCache[key]) return artCache[key];
+  const S = a.s, w = Math.min(a.tw, 900), rows = 56, cw = Math.round(w * S), ch = Math.round(rows * S);
+  const c = document.createElement('canvas'); c.width = cw; c.height = ch * 2; const x = c.getContext('2d');
+  x.fillStyle = '#2a2014'; x.fillRect(0, 0, cw, ch * 2);
+  x.drawImage(im, 0, 2, w, rows, 0, 0, cw, ch); x.save(); x.translate(0, ch * 2); x.scale(1, -1); x.drawImage(im, 0, 2, w, rows, 0, 0, cw, ch); x.restore();
+  x.fillStyle = 'rgba(0,0,0,.25)'; x.fillRect(0, 0, cw, ch * 2);
+  return artCache[key] = ctx.createPattern(c, 'repeat');
+}
+function drawPaintedWarped(scroll, a, im){
+  const S = a.s, pat = artPattern(wallKey(), a, im), step = 4;
+  if (pat.setTransform) pat.setTransform(new DOMMatrix().translateSelf(-(scroll % 4096), 0));
+  for (const top of [true, false]){
+    const w = top ? a.tw : a.bw, h = top ? a.th : a.bh, th = h * S, sy = top ? 0 : a.th + 6;
+    const off = (1 - TA) * (top ? a.tmax : a.bmax) * S;
+    for (let x = 0; x < W + step; x += step){
+      const wx = x + scroll, u = wallCol(wx, w, S), gap = H - wallDepth(wx, false) - wallDepth(wx, true), dy = downShift(wx) + (top ? 1 : -1) * downPinch(wx, gap);
+      const y = top ? -off + dy : H - th + off + dy;
+      if (top && y > 0){ ctx.fillStyle = pat; ctx.fillRect(x, -2, step + .5, y + 4); }
+      if (!top && y + th < H){ ctx.fillStyle = pat; ctx.fillRect(x, y + th - 4, step + .5, H - y - th + 6); }
+      ctx.drawImage(im, Math.min(w - 1, Math.max(0, u)), sy, Math.max(1, step / S), h, x, y, step + .6, th);
+    }
+  }
+}
+function drawWedge(){
+  const f = G.fork; if (!f) return;
+  const pts = [], x0 = Math.max(-4, f.wA - G.scroll), x1 = Math.min(W + 4, f.wA + FORK_L - G.scroll);
+  if (x1 <= x0) return;
+  for (let x = x0; x <= x1; x += 4){ const wg = wedgeAt(x + G.scroll); if (wg) pts.push([x, wg.top, wg.bot]); }
+  if (pts.length < 2) return;
+  const path = new Path2D(); path.moveTo(pts[0][0], pts[0][1]);
+  for (const p of pts) path.lineTo(p[0], p[1]); for (let i = pts.length - 1; i >= 0; i--) path.lineTo(pts[i][0], pts[i][2]); path.closePath();
+  const wk = wallKey(), wa = WALLS[wk], wim = wallImg(wk), pat = wa && wim.complete && wim.naturalWidth ? artPattern(wk, wa, wim) : rockPattern(theme());
+  if (pat.setTransform) pat.setTransform(new DOMMatrix().translateSelf(-(G.scroll % 4096), H / 2 - 40));
+  ctx.save(); ctx.translate(0, 4); ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fill(path); ctx.restore();
+  ctx.fillStyle = pat; ctx.fill(path);
+  ctx.save(); ctx.clip(path); const g = ctx.createLinearGradient(0, H / 2 - 40, 0, H / 2 + 40); g.addColorStop(0, 'rgba(255,230,150,.15)'); g.addColorStop(1, 'rgba(0,0,0,.28)'); ctx.fillStyle = g; ctx.fillRect(x0, 0, x1 - x0, H); ctx.restore();
+  // moss on the top edge, a few hanging vines under it
+  for (const [x, t, b] of pts){ const h = hash(Math.round((x + G.scroll) / 4)); ctx.fillStyle = h > .5 ? '#5a9a3a' : '#3f7a2e'; ctx.beginPath(); ctx.ellipse(x, t + 1, 3 + h * 2, 2 + h, 0, 0, 6.283); ctx.fill();
+    if (h > .9){ ctx.strokeStyle = '#4f8a36'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(x, b); ctx.lineTo(x + 1, b + 6 + h * 8); ctx.stroke(); } }
+  // arrows before the choice
+  if (!f.route && G.t - f.t0 < 9){ const tx = pts[0][0], a = .5 + .5 * Math.sin(G.t * 8), fm = getComputedStyle(document.documentElement).getPropertyValue('--f-mono');
+    ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = C.sun; ctx.font = '800 16px ' + fm; ctx.textAlign = 'center';
+    ctx.fillText('▲ 上の道', Math.min(W - 50, tx + 30), H / 2 - 54); ctx.fillText('▼ 下の道', Math.min(W - 50, tx + 30), H / 2 + 66); ctx.restore(); }
+}
+function routeEvents(route, t0){
+  const ev = [];
+  if (route === 'up'){
+    const ord = { a:['fan','dash','carrier','fanLow'], b:['dash','fan','carrier','rear','turrets','fanLow','dash'], c:['vents','fruit','fan','surge','vents','fruit','carrier','dash','rear'] };
+    const heavy = { turrets:5, vents:5, surge:6.5, fruit:4.5 }; let t = t0, k = 0;
+    while (t < 80){
+      const ar = t < UP_T[0] ? 'a' : t < UP_T[1] ? 'b' : 'c';
+      if (UP_T.some(sw => t > sw - 2.6 && t < sw + 1.8)){ t += .5; continue; }
+      const o = ord[ar], type = o[k % o.length]; ev.push({ t, type });
+      if (k % 3 === 2 && !heavy[type]) ev.push({ t:t + .8, type:k % 2 ? 'dash' : 'rear' });
+      t += heavy[type] || 2.56; k++;
+    }
+    ev.push({ t:84, type:'boss' });
+  } else {
+    const o = ['fan','serp','dash','saury','carrier','star','fanLow','turrets','rear','anem','serps','saurys','fruit','carrier','dash','star','fan','anem','rear','serp','vents','fanLow'];
+    const heavy = { turrets:4.5, serps:4.5, vents:4.5, fruit:4, anem:3.6 }; let t = t0, k = 0;
+    while (t < t0 + 54){ const type = o[k % o.length]; ev.push({ t, type }); if (k % 4 === 3 && !heavy[type]) ev.push({ t:t + .7, type:'dash' }); t += heavy[type] || 2.7; k++; }
+    ev.push({ t:t + 4, type:'boss' });
+  }
+  return ev;
+}
+function updateFork(dt){
+  if (!s4() || G.practice || G.boss) return;
+  const p = G.p, f = G.fork;
+  if (f && !f.route){
+    // walls draw back a little so each lane is roomy
+    if (p && G.scroll + p.x >= f.wA + 12){
+      const wg = wedgeAt(G.scroll + p.x);
+      f.route = G.route = p.y < (wg ? wg.yc : H / 2) ? 'up' : 'down';
+      G.script = G.script.slice(0, G.si).concat(routeEvents(G.route, G.route === 'up' ? G.t + 2 : G.t + 4.7));
+      G.areaBanner = 2.6; G.areaText = G.route === 'up' ? ['上の道', '牙のトンネルへ'] : ['下の道', '岩窟の底へ ・ 長く険しい道'];
+      if (G.route === 'down'){ G.downT0 = G.t; sfx.small(); }
+    }
+  }
+  const fork = G.fork, active = fork && G.scroll + W >= fork.wA - 200 && G.scroll < fork.wA + FORK_L;
+  G.taF += ((active && G.route !== 'down' ? .62 : 1) - G.taF) * Math.min(1, dt * 1.2);
+  if (G.route === 'down'){
+    const t = G.t - G.downT0;
+    if (fork){ fork.k = Math.max(0, 1 - t / 1.1); if (t >= 1.2){ G.fork = null; G.downMode = true; G.downX0 = G.scroll; } }
+  }
+}
 const painted = () => !(G && G.mcfg) && WALLS[wallKey()] ? WALLS[wallKey()] : null;
 const wallCol = (wx, w, S) => { const u = wx / S, p = ((u % (2 * w)) + 2 * w) % (2 * w); return p < w ? p : 2 * w - p; };
 function wallDepth(wx, top){
@@ -601,7 +717,8 @@ function wallDepth(wx, top){
 const stepQ = v => Math.round(v / 12) * 12;
 const seabedY = wx => H - TA * (22 + 16 * (1 + Math.sin(wx * .007)) * .5 + 9 * Math.sin(wx * .023 + 1));
 const tri = v => Math.abs((((v % 1) + 1) % 1) * 2 - 1); // 0..1 sawtooth-like triangle wave for jagged rock
-const ceilBase  = wx => krakenCfg() ? -40
+const ceilBase  = wx => G && G.downMode && s4() ? wallDepth(wx, true) + downShift(wx) + downPinch(wx, H - wallDepth(wx, false) - wallDepth(wx, true))
+  : krakenCfg() ? -40
   : descentCfg() ? descentWall(wx, true)
   : tunnelCfg() ? tunnelAt(wx, G.mcfg.tunnel).top
   : painted() ? wallDepth(wx, true)
@@ -614,7 +731,8 @@ const ceilBase  = wx => krakenCfg() ? -40
   : stg() === 2
   ? TA * (18 + 26 * (1 + Math.sin(wx * .014 + .7)) * .5 + 30 * (1 + Math.sin(wx * .0052)) * .5)
   : TA * (14 + 18 * (1 + Math.sin(wx * .011)) * .5 + 22 * (1 + Math.sin(wx * .0047 + 1.3)) * .5);
-const floorBase = wx => descentCfg() ? descentWall(wx, false)
+const floorBase = wx => G && G.downMode && s4() ? H - wallDepth(wx, false) + downShift(wx) - downPinch(wx, H - wallDepth(wx, false) - wallDepth(wx, true))
+  : descentCfg() ? descentWall(wx, false)
   : krakenCfg() ? (kPhase() === 'deck' ? DECK_Y : kPhase() === 'sink' ? H + 300 : seabedY(wx))
   : tunnelCfg() ? tunnelAt(wx, G.mcfg.tunnel).bot
   : painted() ? H - wallDepth(wx, false)
@@ -691,17 +809,11 @@ const stIdx = () => Math.max(0, Math.min(4, stg() - 1));
 const bulletK = () => BULLET_K[stIdx()], fireK = () => FIRE_K[stIdx()];
 function buildScript(stage){
   if (stage === 4){
-    const ord = { a:['fan','turrets','dash','carrier','fanLow','rear','turrets','fan'], b:['dash','fan','carrier','rear','dash','turrets','fanLow','carrier'],
-                  c:['vents','fruit','fan','surge','vents','fruit','carrier','dash','vents','fruit','rear'] };
-    const heavy = { turrets:5, vents:5, surge:6.5, fruit:4.5 }, ev = []; let t = 2.5, k = 0;
-    while (t < 80){
-      const ar = t < AREA4_T[0] ? 'a' : t < AREA4_T[1] ? 'b' : 'c';
-      if (AREA4_T.some(sw => t > sw - 2.6 && t < sw + 1.8)){ t += .5; continue; }   // the walls are away: no waves right at the change
-      const o = ord[ar], type = o[k % o.length]; ev.push({ t, type });
-      if (k % 3 === 2 && !heavy[type]) ev.push({ t:t + .8, type:k % 2 ? 'dash' : 'rear' });
-      t += heavy[type] || 2.56; k++;
-    }
-    ev.push({ t:84, type:'boss' });
+    // the opening stretch and the fork; the rest of the stage is added when the route is chosen (routeEvents)
+    const ev = [], o = ['fan','turrets','dash','carrier','fanLow']; let t = 2.5, k = 0;
+    while (t < FORK_T - 2){ ev.push({ t, type:o[k % o.length] }); t += o[k % o.length] === 'turrets' ? 5 : 2.6; k++; }
+    ev.push({ t:FORK_T, type:'fork' });
+    ev.push({ t:FORK_T + 4, type:'fan' }, { t:FORK_T + 7, type:'dash' });
     return ev;
   }
   const order = stage === 5
@@ -737,7 +849,7 @@ function newGame(mode = 'main'){
 function resetStage(){
   Object.assign(G, { state:'play', t:0, scroll:0, gauge:-1, flashIdx:-1, flashT:0, shots:[], eb:[], en:[], parts:[], caps:[], texts:[], blocks:[], walls:{}, wallId:0, vents:[],
     groups:{}, gid:0, eid:0, gates:[], surge:null, wells:[], script:G.mcfg ? buildMonthlyScript(G.mcfg) : buildScript(G.stage), si:0, boss:null, bossDead:false, clearT:0, respawn:0,
-    fireCd:0, misCd:0, snCd:0, shake:0, banner:3.4, rush:null, rushN:0, nextBossT:0, bossBanner:0 });
+    fireCd:0, misCd:0, snCd:0, shake:0, fork:null, route:null, downMode:false, downT0:0, downX0:0, taF:1, areaBanner:0, areaText:null, banner:3.4, rush:null, rushN:0, nextBossT:0, bossBanner:0 });
   GAUGE = gaugeList(G.stage); buildGauge(); TA = 0; updatePanel();
 }
 function nextStage(){
@@ -902,6 +1014,10 @@ function spawn(type){
       const x = Math.min(W - 30, px + 160 + Math.random() * 120 + i * 120);
       G.en.push({ id:G.eid++, kind:'tent', wx:G.scroll + x, x, y:DECK_Y, r:11, hp:6, sc:500, t:-i * .7, phase:'warn', len:0, L:0, a0:-Math.PI / 2, dirS:-1 });
     }
+  } else if (type === 'fork'){
+    if (!s4()) return;
+    G.fork = { wA:G.scroll + W + 60, t0:G.t, route:null };
+    G.areaBanner = 2.8; G.areaText = ['分かれ道！', '上：景色が変わる道 ／ 下：長く険しい道'];
   } else if (type === 'fruit'){
     // STAGE 4: fire-fruit plants hang from the ceiling and drip balls of fire
     if (TA < .6) return spawn('dash');
@@ -1449,6 +1565,8 @@ function updatePlayer(dt){
     if (k.dead || Math.abs(p.x - k.x) > 11 || Math.abs(p.y - k.y) > 11) continue;
     if (p.inv > 0){ p.x = k.x - 12; clampP(); } else { killPlayer(); return; }
   }
+  const wg = wedgeAt(wx);
+  if (wg && p.y + 5 > wg.top && p.y - 5 < wg.bot){ if (p.inv > 0) p.y = p.y < wg.yc ? wg.top - 6 : wg.bot + 6; else { killPlayer(); return; } }
   if (p.y - 5 < cy || p.y + 5 > fy){
     if (p.inv > 0) p.y = Math.max(cy + 6, Math.min(fy - 6, p.y));
     else killPlayer();
@@ -2149,10 +2267,15 @@ function update(dt){
   G.t += dt; G.shake = Math.max(0, G.shake - dt);
   const speed = G.boss ? 30 : 60; G.scroll += speed * dt;
   TA = G.boss ? Math.max(0, TA - dt / 3) : Math.min(1, G.t / 5);
-  if (stg() === 4 && !G.mcfg && !G.boss && !G.practice){
-    for (const sw of AREA4_T) TA = Math.min(TA, Math.max(0, Math.abs(G.t - sw) - .25) / 1.3);
-    const k = AREA4_T.findIndex(sw => G.t >= sw && G.t - dt < sw);
-    if (k >= 0){ G.areaBanner = 2.6; G.areaN = k + 2; }
+  if (s4() && !G.boss && !G.practice){
+    updateFork(dt);
+    TA = Math.min(TA, G.taF);
+    if (G.route === 'up'){
+      for (const sw of UP_T) TA = Math.min(TA, Math.max(0, Math.abs(G.t - sw) - .25) / 1.3);
+      const k = UP_T.findIndex(sw => G.t >= sw && G.t - dt < sw);
+      if (k >= 0){ G.areaBanner = 2.6; G.areaText = [`AREA ${k + 2} / 3`, AREA_NAME['4' + area4()]]; }
+    }
+    if (G.route === 'down'){ const t = G.t - G.downT0; TA = Math.min(TA, t < 1.2 ? 1 - t / 1.2 : (t - 1.2) / 1.5); }
   }
   if (G.areaBanner > 0) G.areaBanner -= dt;
   while (G.si < G.script.length && G.script[G.si].t <= G.t){ spawn(G.script[G.si].type); G.si++; }
@@ -2171,6 +2294,7 @@ function update(dt){
     if (s.k === 'm' && s.up){ const cy = ceilY(wx); if (!s.ground && s.y <= cy + 4){ s.ground = true; s.vx = 200; s.vy = 0; } if (s.ground) s.y = cy + 4; }
     else if (s.k === 'm'){ const fy = floorY(wx); if (!s.ground && s.y >= fy - 4){ s.ground = true; s.vx = 200; s.vy = 0; } if (s.ground) s.y = fy - 4; }
     else if (s.k === 'n' && (s.y < ceilY(wx) || s.y > floorY(wx))) s.dead = true;
+    if (s.k === 'n' && G.fork){ const wg = wedgeAt(wx); if (wg && s.y > wg.top && s.y < wg.bot) s.dead = true; }
     if (s.x - (s.len || 0) > W + 10 || s.y < -10 || s.y > H + 10) s.dead = true;
   }
 
@@ -2573,7 +2697,7 @@ function drawTerrain(scroll){
   if (krakenCfg()) return drawKrakenTerrain(scroll);
   if (TA <= .01) return;
   const pa = painted(), pim = pa && wallImg(wallKey());
-  if (pa && pim.complete && pim.naturalWidth) return drawPainted(scroll, pa, pim);
+  if (pa && pim.complete && pim.naturalWidth){ if (G && G.downMode && s4()) return drawPaintedWarped(scroll, pa, pim); return drawPainted(scroll, pa, pim); }
   const t = theme(), pat = rockPattern(t), now = performance.now() / 1000, step = 4, station = t.deco === 'station';
   const LX = -.45, LY = -.89; // light comes from the upper left
   for (const top of [true, false]){
@@ -2881,6 +3005,8 @@ function draw(){
   if (!G) TA = 1;
   drawBg(scroll); drawTerrain(scroll);
   if (descentCfg()){ ctx.fillStyle = `rgba(0,4,10,${.62 * diveDepth()})`; ctx.fillRect(0, 0, W, H); } // the rocks sink into the dark too
+  if (G && G.fork) drawWedge();
+  if (G && G.downMode && s4()){ ctx.fillStyle = `rgba(0,6,14,${Math.min(.35, (G.t - G.downT0) / 120)})`; ctx.fillRect(0, 0, W, H); } // deeper and darker
   if (!G){ drawShip(shipId, W * .3, H / 2 + Math.sin(bgScroll * .05) * 14, 1.6, false); return; }
   for (const c of G.caps){
     const a = .7 + .3 * Math.sin(c.t * 9);
@@ -2974,8 +3100,9 @@ function draw(){
     const a = Math.min(1, G.areaBanner / .5, (2.6 - G.areaBanner) / .3), cs = getComputedStyle(document.documentElement);
     ctx.save(); ctx.globalAlpha = a; ctx.textAlign = 'center';
     ctx.fillStyle = 'rgba(4,12,20,.7)'; ctx.fillRect(0, H / 2 - 34, W, 52);
-    ctx.fillStyle = C.sun; ctx.font = '700 11px ' + cs.getPropertyValue('--f-mono'); ctx.fillText(`AREA ${G.areaN} / 3`, W / 2, H / 2 - 16);
-    ctx.fillStyle = C.ink; ctx.font = '700 20px ' + cs.getPropertyValue('--f-display'); ctx.fillText(AREA4_NAME[area4()], W / 2, H / 2 + 8);
+    const [t1, t2] = G.areaText || ['', ''];
+    ctx.fillStyle = C.sun; ctx.font = '700 12px ' + cs.getPropertyValue('--f-mono'); ctx.fillText(t1, W / 2, H / 2 - 15);
+    ctx.fillStyle = C.ink; ctx.font = '700 18px ' + cs.getPropertyValue('--f-display'); ctx.fillText(t2, W / 2, H / 2 + 8);
     ctx.restore();
   }
   if (G.rushN > 0 && G.boss && !G.bossDead){
@@ -3301,7 +3428,7 @@ const TUT_PAGES = [
       <div class="tut-item"><canvas data-fig="en-ember"></canvas><h3>火山弾 <small>STAGE 4 ・ 50点</small></h3><p>噴出孔が噴いた瞬間に2個飛び出し、放物線を描いて落ちてきます。弾1発で壊せます。</p></div>
       <div class="tut-item"><canvas data-fig="en-worm"></canvas><h3>STAGE 4 ボス「ヒートワーム」 <small>撃破 10,000点</small></h3><p>画面を大きく泳ぎ回る、体の長い海の虫。弱点は先頭の頭だけで、胴体の節は弾を防ぎます（節は壊せて200点）。頭から3方向にねらい撃ち。胴体にふれてもミス。頭を撃ち続けて撃破。</p></div>
     </div>
-    <p class="tut-note">STAGE 4「紅蓮の溶岩巣」：緑の浮遊遺跡 → 牙のトンネル → 紅蓮の溶岩巣と、景色が3回変わります。溶岩巣では天井の木が火の玉を落とし、噴出孔が噴き、ときどき床がせり上がります。</p>
+    <p class="tut-note">STAGE 4「紅蓮の溶岩巣」：緑の浮遊遺跡の途中で、右から突き出た岩が道を上下に分けます。岩の先を通り過ぎるときにいた側の道へ進みます。上の道は牙のトンネル → 紅蓮の溶岩巣と景色が変わり、火を落とす木や噴出孔が待っています。下の道は緑の遺跡のまま長く下っていき、壁がうねったり、ギリギリの狭い所があったり、いろいろな敵が出てきます。どちらも最後はボス戦です。</p>
     <div class="tut-item"><canvas data-fig="en-king" style="height:150px"></canvas><h3>STAGE 5 最終ボス「深海の王」 <small>蛇の頭 1,500点 / 撃破 30,000点</small></h3><p>まず赤く光る蛇の頭3つを壊すと、金の封印が解けて口が開き、弱点になります。口を撃ち続けて撃破。ときどき自機の高さに金色の点線が出たら、1秒後に口からそこへ太いレーザー。上下に動いてよけましょう。口が開くと全方向弾も加わります。</p></div>
     <p class="tut-note">STAGE 5「月光の玉座」：短い道中のあと「ボスラッシュ」。コア → 深淵クラゲ → 幽霊戦艦 → ヒートワーム（少し弱くなっています、1体5,000点）と連続で戦い、最後に深海の王が現れます。</p>` },
   { tab:'アイテム', html:`
