@@ -1062,7 +1062,7 @@ function makeBoss(type, rush){
     case 'core':  return { type, x:W + 90, y:H / 2, t:0, hp:hp(21), plates:Array(3).fill(hp(5)), cd:2, vol:0, flash:0, dead:false, mk:1 };
     case 'jelly': return { type, x:W + 90, y:H / 2, t:0, hp:hp(24), cd:1.6, wasOpen:false, flash:0, dead:false };
     case 'fort':  return { type, x:W + 110, y:H / 2, t:0, hp:hp(30), cannons:[{ dx:-25, dy:-44, hp:hp(12), cd:1.5 }, { dx:-12, dy:36, hp:hp(12), cd:2.4 }], cd:2, call:4, flash:0, dead:false };
-    case 'bone':  return { type, x:W + 120, y:H / 2, t:0, hp:hp(rush ? 22 : 60), segs:Array.from({ length:rush ? 10 : 16 }, () => ({ hp:rush ? 4 : 9, glow:0 })), hist:Array.from({ length:200 }, (_, i) => ({ x:W + 150 + (200 - i) * 3, y:H / 2 + 10 })), cd:2, vcd:2.5, lunge:{ st:'drift', t:0 }, flash:0, dead:false };
+    case 'bone':  return { type, x:W - 30, y:H / 2, t:0, hp:hp(rush ? 22 : 60), segs:Array.from({ length:rush ? 20 : 30 }, () => ({ hp:rush ? 2 : 7, glow:0 })), face:Math.PI / 2, hist:Array.from({ length:700 }, (_, i) => ({ x:W + 120 + (700 - i) * 2.4, y:H / 2 + 10 })), cd:2, vcd:2.5, lunge:{ st:'drift', t:0 }, flash:0, dead:false };
     case 'worm':  return { type, x:W + 60, y:H / 2, t:0, hp:hp(42), segs:Array.from({ length:rush ? 8 : 10 }, () => ({ hp:rush ? 3 : 4 })), hist:Array.from({ length:120 }, (_, i) => ({ x:W + 60 + (120 - i) * 4, y:H / 2 })), cd:2, flash:0, dead:false };
     case 'king':  return { type, x:W + 140, y:H / 2, t:0, hp:160, gems:[{ dx:-151, dy:-35, hp:60, cd:1.2 }, { dx:-150, dy:48, hp:60, cd:2.3 }, { dx:-199, dy:-76, hp:60, cd:3.1 }], laser:null, lcd:3.5, rcd:2.5, call:6, flash:0, dead:false };
   }
@@ -1472,27 +1472,33 @@ function drawKrakenTerrain(scroll){
    vertebra and the body crumbles away; the head alone goes berserk, lunging and breathing fire, and can now be killed. ---------- */
 const BONE_HEAD = new Image(); BONE_HEAD.src = 'img/bonehead.webp';
 const BONE_RIB = new Image(); BONE_RIB.src = 'img/bonerib.webp';
-const BONE_GAP = 26, BHK = .42;
+const BONE_GAP = 46, BHK = .62, RIB_K = .6;
 function boneSegs(b){
-  const out = [], H0 = b.hist; let need = BONE_GAP + 22, acc = 0, i = H0.length - 1, px = b.x + 30, py = b.y + 10;
+  const out = [], H0 = b.hist; let need = BONE_GAP + 40, acc = 0, i = H0.length - 1, px = b.x + 20, py = b.y + 10;
   while (out.length < b.segs.length && i >= 0){
     const q = H0[i], d = Math.hypot(q.x - px, q.y - py);
-    if (acc + d >= need){ const f = (need - acc) / d; const nx = px + (q.x - px) * f, ny = py + (q.y - py) * f; out.push({ x:nx, y:ny, a:Math.atan2(py - ny, px - nx), s:b.segs[out.length], i:out.length }); px = nx; py = ny; acc = 0; need = BONE_GAP; continue; }
+    if (acc + d >= need){ const f = (need - acc) / d; const nx = px + (q.x - px) * f, ny = py + (q.y - py) * f; out.push({ x:nx, y:ny, a:Math.atan2(py - ny, px - nx), s:b.segs[out.length], i:out.length, sc:1 - out.length / b.segs.length * .3 }); px = nx; py = ny; acc = 0; need = BONE_GAP; continue; }
     acc += d; px = q.x; py = q.y; i--;
   }
   return out;
 }
-const boneMouth = b => { const k = BHK * (b.alone ? 1.12 : 1); return { x:b.x + 20 + (-150 + 62) * k, y:b.y + 10 + (-175 + 200) * k }; };
+function boneFace(b){ const r = (b.face || Math.PI) - Math.PI, flip = Math.cos(b.face || Math.PI) > 0; return { r, flip }; }
+function bonePt(b, ox, oy){ const k = BHK * (b.alone ? 1.12 : 1), f = boneFace(b); let x = ox * k, y = oy * k; if (f.flip) y = -y;
+  const c = Math.cos(f.r), sn = Math.sin(f.r); return { x:b.x + 20 + x * c - y * sn, y:b.y + 10 + x * sn + y * c }; }
+const boneMouth = b => bonePt(b, -88, 25);
 function updateBone(b, dt){
   b.t += dt; b.flash = Math.max(0, b.flash - dt);
   const p = G.p, alone = b.segs.every(g => g.hp <= 0);
   if (alone && !b.alone){ b.alone = true; b.t2 = 0; G.shake = 1; sfx.die(); for (const g of boneSegs(b)) burst(g.x, g.y, '#ff8a3d', 10, .9); floatText(W / 2, H / 2 - 50, '頭だけになった！', C.coral, 1.8, 16); b.hist.length = 0; }
   if (!b.alone){
     // a wide figure-eight across the right of the screen; the vertebrae follow the path
-    const tx = W * .62 + W * .24 * Math.cos(b.t * .5), ty = H / 2 + 105 * Math.sin(b.t * 1);
-    b.x += (tx - b.x) * Math.min(1, dt * 1.4); b.y += (ty - b.y) * Math.min(1, dt * 1.4);
-    b.hist.push({ x:b.x + 30, y:b.y + 10 }); if (b.hist.length > 900) b.hist.shift();
-    if (b.x > W - 30) return;
+    // it coils around the whole screen: a loop just inside the edges that slowly tightens and loosens
+    b.th = (b.th || 0) + dt * .42; const sq = 1 - .1 * (.5 + .5 * Math.sin(b.t * .35));
+    const tx = W / 2 + (W / 2 - 46) * sq * Math.cos(b.th), ty = H / 2 - 10 - (H / 2 - 34) * sq * Math.sin(b.th);
+    const ox = b.x, oy = b.y; b.x += (tx - b.x) * Math.min(1, dt * 2.2); b.y += (ty - b.y) * Math.min(1, dt * 2.2);
+    const vx = b.x - ox, vy = b.y - oy; if (vx * vx + vy * vy > .2){ const a = Math.atan2(vy, vx); let d = a - (b.face || Math.PI); while (d > Math.PI) d -= 6.283; while (d < -Math.PI) d += 6.283; b.face = (b.face || Math.PI) + d * Math.min(1, dt * 5); }
+    b.hist.push({ x:b.x + 20, y:b.y + 10 }); if (b.hist.length > 2600) b.hist.shift();
+    if (b.t < 2.5) return;
     b.cd -= dt; if (b.cd <= 0 && p){ b.cd = 1.7; const m = boneMouth(b), a = Math.atan2(p.y - m.y, p.x - m.x); for (let k = -1; k <= 1; k++) G.eb.push({ x:m.x, y:m.y, vx:Math.cos(a + k * .22) * 160, vy:Math.sin(a + k * .22) * 160 }); }
     b.vcd -= dt; if (b.vcd <= 0 && p){ b.vcd = 1.1; const live = boneSegs(b).filter(g => g.s.hp > 0 && g.x < W - 10); const g = live[Math.floor(Math.random() * live.length)];
       if (g){ g.s.glow = .5; aim(g.x, g.y, 140); } }
@@ -1502,56 +1508,57 @@ function updateBone(b, dt){
   // the head alone: drifts, then lunges at the ship after a flash of the eye, and breathes fire
   b.t2 += dt; const L = b.lunge;
   L.t += dt;
-  if (L.st === 'drift'){ const tx = W * .7 + 50 * Math.cos(b.t2 * .9), ty = H / 2 + 110 * Math.sin(b.t2 * 1.3); b.x += (tx - b.x) * Math.min(1, dt * 2); b.y += (ty - b.y) * Math.min(1, dt * 2); if (L.t > 2.2){ L.st = 'warn'; L.t = 0; } }
+  if (L.st === 'drift'){ const tx = W * .66 + 60 * Math.cos(b.t2 * .9), ty = H / 2 + 90 * Math.sin(b.t2 * 1.3); b.x += (tx - b.x) * Math.min(1, dt * 2); b.y += (ty - b.y) * Math.min(1, dt * 2); if (L.t > 2.2){ L.st = 'warn'; L.t = 0; } }
   else if (L.st === 'warn'){ if (p){ L.tx = p.x + 20; L.ty = p.y; } if (L.t > .7){ L.st = 'go'; L.t = 0; L.fx = b.x; L.fy = b.y; sfx.small(); } }
   else if (L.st === 'go'){ const k = Math.min(1, L.t / .45); b.x = L.fx + (L.tx + 60 - L.fx) * k; b.y = L.fy + (L.ty - 26 - L.fy) * k; if (L.t > .45){ L.st = 'back'; L.t = 0; G.shake = .35; } }
-  else if (L.st === 'back'){ if (L.t > .8){ L.st = 'drift'; L.t = 0; } b.x += (W * .7 - b.x) * Math.min(1, dt * 2.5); }
+  else if (L.st === 'back'){ if (L.t > .8){ L.st = 'drift'; L.t = 0; } b.x += (W * .66 - b.x) * Math.min(1, dt * 2.5); b.y += (H / 2 - b.y) * Math.min(1, dt * 2); }
+  if (p){ const a = L.st === 'go' ? Math.atan2(L.ty - L.fy, L.tx - L.fx) : Math.atan2(p.y - b.y, p.x - b.x); let d = a - (b.face || Math.PI); while (d > Math.PI) d -= 6.283; while (d < -Math.PI) d += 6.283; b.face = (b.face || Math.PI) + d * Math.min(1, dt * 4); }
   b.cd -= dt; if (b.cd <= 0 && p && L.st === 'drift'){ b.cd = 1.15; const m = boneMouth(b), a0 = Math.atan2(p.y - m.y, p.x - m.x);
     for (let k = -2; k <= 2; k++) G.eb.push({ x:m.x, y:m.y, vx:Math.cos(a0 + k * .17) * 150, vy:Math.sin(a0 + k * .17) * 150, big:true }); }
 }
 function shotVsBone(b, s){
   const hit = (x, y, r) => s.k === 'b' ? Math.abs(s.y - y) < r && s.x >= x - r && s.x - s.len <= x + r : d2(s, { x, y }) < r * r;
   const hx = b.x + 20, hy = b.y + 10;
-  if (hit(hx, hy, 40)){
+  if (hit(hx, hy, b.alone ? 62 : 56)){
     if (b.alone) return damageBoss(b, s, dmgOf(s));
     s.dead = true; if (Math.random() < .3) burst(s.x, s.y, '#d8c8a8', 2, .3); return;   // the skull is armoured while the body lives
   }
   if (b.alone) return;
   for (const g of boneSegs(b)){
-    if (g.s.hp <= 0 || !hit(g.x, g.y, 20)) continue;
+    if (g.s.hp <= 0 || !hit(g.x, g.y, 34 * (g.sc || 1))) continue;
     s.dead = true; g.s.hp -= dmgOf(s); b.flash = .03; sfx.hit();
     if (g.s.hp <= 0){ burst(g.x, g.y, '#ff8a3d', 14, .9); G.score += 300; floatText(g.x, g.y - 12, '+300', C.ink, .8, 10); }
     return;
   }
 }
 function boneTouches(b, p){
-  if (((p.x - (b.x + 25)) / 48) ** 2 + ((p.y - (b.y + 15)) / 50) ** 2 < 1) return true;
-  return !b.alone && boneSegs(b).some(g => g.s.hp > 0 && d2(p, g) < 18 * 18);
+  if (d2(p, { x:b.x + 20, y:b.y + 10 }) < (b.alone ? 64 : 58) ** 2) return true;
+  return !b.alone && boneSegs(b).some(g => g.s.hp > 0 && d2(p, g) < (30 * (g.sc || 1)) ** 2);
 }
 const BONE_DEAD = {};
 function boneRibDark(){ if (BONE_DEAD.c) return BONE_DEAD.c; const c = document.createElement('canvas'); c.width = 126; c.height = 219; const x = c.getContext('2d'); x.drawImage(BONE_RIB, 0, 0); x.globalCompositeOperation = 'source-atop'; x.fillStyle = 'rgba(25,14,10,.8)'; x.fillRect(0, 0, 126, 219); return BONE_DEAD.c = c; }
 function drawBone(b){
   const ready = BONE_HEAD.complete && BONE_HEAD.naturalWidth && BONE_RIB.complete && BONE_RIB.naturalWidth, now = performance.now() / 1000;
   if (!b.alone){
-    const segs = boneSegs(b), rk = .3;
+    const segs = boneSegs(b);
     for (let i = segs.length - 1; i >= 0; i--){
-      const g = segs[i], sc = rk * (1 - i / segs.length * .45);
+      const g = segs[i], sc = RIB_K * g.sc;
       ctx.save(); ctx.translate(g.x, g.y); ctx.rotate(g.a + Math.PI); ctx.scale(sc, sc);
       if (ready) ctx.drawImage(g.s.hp > 0 ? BONE_RIB : boneRibDark(), -63, -110);
       else { ctx.fillStyle = g.s.hp > 0 ? '#a07050' : '#3a2a20'; ctx.fillRect(-20, -60, 40, 120); }
       ctx.restore();
-      if (g.s.hp > 0 && (g.s.glow || b.flash > 0)){ ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = `rgba(255,140,50,${.5 * (g.s.glow ? g.s.glow * 2 : .6)})`; ctx.beginPath(); ctx.arc(g.x, g.y, 16, 0, 6.283); ctx.fill(); ctx.globalCompositeOperation = 'source-over'; }
+      if (g.s.hp > 0 && (g.s.glow || b.flash > 0)){ ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = `rgba(255,140,50,${.5 * (g.s.glow ? g.s.glow * 2 : .6)})`; ctx.beginPath(); ctx.arc(g.x, g.y, 30 * g.sc, 0, 6.283); ctx.fill(); ctx.globalCompositeOperation = 'source-over'; }
     }
   }
   const lunge = b.lunge && b.lunge.st, k = BHK * (b.alone ? 1.12 : 1);
-  ctx.save(); ctx.translate(b.x + 20, b.y + 10); if (lunge === 'go') ctx.rotate(-.12);
+  const fc = boneFace(b); ctx.save(); ctx.translate(b.x + 20, b.y + 10); ctx.rotate(fc.r); if (fc.flip) ctx.scale(1, -1);
   if (ready) ctx.drawImage(BONE_HEAD, -150 * k, -175 * k, 331 * k, 368 * k);
   if (b.flash > 0 && b.alone && ready){ ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = .3; ctx.drawImage(BONE_HEAD, -150 * k, -175 * k, 331 * k, 368 * k); ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1; }
   // eye: dull while armoured, blazing once alone, flashing before a lunge
   const ex = (-150 + 65) * k, ey = (-175 + 138) * k, a = lunge === 'warn' ? .6 + .4 * Math.sin(now * 40) : b.alone ? .7 : .35;
   ctx.globalCompositeOperation = 'lighter'; const eg = ctx.createRadialGradient(ex, ey, 0, ex, ey, b.alone ? 16 : 10); eg.addColorStop(0, `rgba(255,220,140,${a})`); eg.addColorStop(1, 'rgba(255,80,20,0)');
   ctx.fillStyle = eg; ctx.beginPath(); ctx.arc(ex, ey, 16, 0, 6.283); ctx.fill(); ctx.globalCompositeOperation = 'source-over';
-  if (!b.alone){ ctx.strokeStyle = `rgba(200,220,255,${.25 + .15 * Math.sin(now * 3)})`; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.ellipse(-10, 0, 52, 58, 0, 0, 6.283); ctx.stroke(); } // armour shimmer
+  if (!b.alone){ ctx.strokeStyle = `rgba(200,220,255,${.25 + .15 * Math.sin(now * 3)})`; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.ellipse(-10 * k / .42, 0, 52 * k / .42, 58 * k / .42, 0, 0, 6.283); ctx.stroke(); } // armour shimmer
   ctx.restore();
 }
 function killEnemy(e){
@@ -3520,7 +3527,7 @@ const TUT_PAGES = [
     <p class="tut-note">STAGE 3「宇宙ステーション」：段々になった機械の通路。壁を撃ち抜きながら進みます。</p>
     <div class="tut-list two">
       <div class="tut-item"><canvas data-fig="en-ember"></canvas><h3>火山弾 <small>STAGE 4 ・ 50点</small></h3><p>噴出孔が噴いた瞬間に2個飛び出し、放物線を描いて落ちてきます。弾1発で壊せます。</p></div>
-      <div class="tut-item"><canvas data-fig="en-bone"></canvas><h3>STAGE 4 ボス「骨の大蛇」 <small>背骨 300点 / 撃破 10,000点</small></h3><p>燃える骨の大蛇が、背骨をつらねて画面を大きく泳ぎ回ります。背骨が1つでも残っている間、頭は硬くて弾が効きません。背骨は光った所から弾を撃ってきます。背骨を全部壊すと体がくずれ、頭だけになって暴れ出します。目が光ったら突進の合図。頭は火の玉を吐くので注意。頭を倒せば撃破。</p></div>
+      <div class="tut-item"><canvas data-fig="en-bone"></canvas><h3>STAGE 4 ボス「骨の大蛇」 <small>背骨 300点 / 撃破 10,000点</small></h3><p>燃える骨の大蛇が、太い背骨で画面のまわりをぐるりと取り囲みます。囲まれた内側で戦いましょう。背骨が1つでも残っている間、頭は硬くて弾が効きません。背骨は光った所から弾を撃ってきます。背骨を全部壊すと体がくずれ、頭だけになって暴れ出します。目が光ったら突進の合図。頭は火の玉を吐くので注意。頭を倒せば撃破。</p></div>
     </div>
     <p class="tut-note">STAGE 4「紅蓮の溶岩巣」：緑の浮遊遺跡の途中で、右から突き出た岩が道を上下に分けます。岩の先を通り過ぎるときにいた側の道へ進みます。上の道は牙のトンネル → 紅蓮の溶岩巣と景色が変わり、火を落とす木や噴出孔が待っています。下の道は緑の遺跡のまま長く下っていき、壁がうねったり、ギリギリの狭い所があったり、いろいろな敵が出てきます。どちらも最後はボス戦です。</p>
     <div class="tut-item"><canvas data-fig="en-king" style="height:150px"></canvas><h3>STAGE 5 最終ボス「深海の王」 <small>蛇の頭 1,500点 / 撃破 30,000点</small></h3><p>まず赤く光る蛇の頭3つを壊すと、金の封印が解けて口が開き、弱点になります。口を撃ち続けて撃破。ときどき自機の高さに金色の点線が出たら、1秒後に口からそこへ太いレーザー。上下に動いてよけましょう。口が開くと全方向弾も加わります。</p></div>
@@ -3654,10 +3661,10 @@ const FIGS = {
     const x = w * .3; ctx.fillStyle = '#3a1d16'; ctx.beginPath(); ctx.moveTo(x - 15, fy); ctx.lineTo(x - 8, fy - 14); ctx.lineTo(x + 8, fy - 14); ctx.lineTo(x + 15, fy); ctx.closePath(); ctx.fill(); ctx.stroke();
     ctx.strokeStyle = 'rgba(255,138,61,.6)'; ctx.setLineDash([3, 4]); ctx.beginPath(); ctx.moveTo(x, fy - 14); ctx.quadraticCurveTo(x + 60, -40, x + 130, fy - 4); ctx.stroke(); ctx.setLineDash([]);
     drawEnemy({ kind:'ember', x:x + 70, y:16, t:.3 }); drawEnemy({ kind:'ember', x:x + 112, y:fy - 26, t:1 }); },
-  'en-bone'(w, h){ const hist = []; for (let i = 0; i < 160; i++) hist.push({ x:w * .5 + (159 - i) * 1.6, y:h / 2 + 10 + Math.sin(i * .05 + 1) * 16 });
+  'en-bone'(w, h){ const hist = []; for (let i = 0; i < 400; i++) hist.push({ x:w * .5 + (399 - i) * 2.4, y:h / 2 + 10 + Math.sin(i * .03 + 1) * 40 });
     const b = { type:'bone', x:w * .5 - 20, y:h / 2 - 2, t:0, segs:Array.from({ length:10 }, (_, i) => ({ hp:i === 4 ? 0 : 5 })), hist, flash:0 };
-    ctx.save(); ctx.translate(b.x, b.y); ctx.scale(.4, .4); ctx.translate(-b.x, -b.y); drawBone(b); ctx.restore();
-    fx.label(w * .5 + 30, h - 6, '背骨（先に全部壊す）', C.coral); fx.label(w * .5 - 30, h / 2 + 30, '頭', C.sun); drawLeaf(26, h / 2, 1, false); },
+    ctx.save(); ctx.translate(b.x, b.y); ctx.scale(.27, .27); ctx.translate(-b.x, -b.y); drawBone(b); ctx.restore();
+    fx.label(w * .5 + 34, h - 6, '背骨（先に全部壊す）', C.coral); fx.label(w * .5 - 52, h - 6, '頭', C.sun); drawLeaf(26, h / 2, 1, false); },
   'en-worm'(w, h){ const hist = []; for (let i = 0; i < 80; i++) hist.push({ x:w * .45 + (79 - i) * 2.6, y:h / 2 + Math.sin(i * .09 + 2) * 18 });
     const b = { type:'worm', x:hist[79].x, y:hist[79].y, t:0, segs:Array.from({ length:8 }, (_, i) => ({ hp:i === 3 ? 0 : 4 })), hist, flash:0 };
     drawWorm(b); fx.label(b.x - 56, b.y + 4, '頭（弱点）', C.coral); drawLeaf(26, h / 2, 1, false); },
